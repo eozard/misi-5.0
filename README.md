@@ -1,25 +1,27 @@
-# Sistem Absensi PKL dan Pendaftaran
+# Sistem Absensi PKL dan Pendaftaran (MySQL/XAMPP Version)
 
-Aplikasi full-stack untuk mengelola absensi PKL, izin, logbook harian, dan pendaftaran peserta. Backend menggunakan Express.js dan Supabase, frontend menggunakan React + Vite + Tailwind CSS.
+Aplikasi full-stack untuk mengelola absensi PKL, izin, logbook harian, dan pendaftaran peserta. Backend menggunakan Express.js + MySQL (XAMPP/phpMyAdmin), frontend menggunakan React + Vite + Tailwind CSS.
 
 ## Fitur Utama
 
 - Login berbasis JWT untuk admin, mahasiswa, dan anak SMK.
 - Device binding berbasis fingerprint browser untuk membatasi perangkat user.
-- Validasi absensi dari jaringan kampus dengan whitelist IP `103.209.9.*`.
+- Validasi absensi dari jaringan kampus dengan whitelist IP `103.209.9.*` (bisa di-bypass untuk development lokal).
 - Absensi sesi pagi dan sore dengan aturan waktu, anti-duplikat, dan jeda minimal.
 - Pengajuan izin oleh mahasiswa, lengkap dengan status approval admin.
 - Logbook harian mahasiswa dengan status draft/submitted.
 - Dashboard admin untuk statistik, user, device, laporan absensi, izin, dan logbook.
 - Form pendaftaran publik dengan upload PDF CV, transkrip, dan surat persetujuan.
-- Dashboard admin pendaftaran untuk melihat pendaftar, assign divisi, dan mengelola akun admin pendaftaran.
-- Penyimpanan data dan file menggunakan Supabase Database + Supabase Storage.
+- Dashboard admin pendaftaran untuk assign divisi dan mengelola akun admin pendaftaran.
+- **Database**: MySQL/MariaDB lokal (XAMPP/phpMyAdmin).
+- **Storage**: file PDF disimpan di folder lokal `server/uploads/pendaftaran/`.
 
 ## Teknologi
 
 - Frontend: React 18, Vite, Tailwind CSS, React Router, Axios, Lucide React.
 - Backend: Node.js, Express.js, JWT, bcryptjs, Multer.
-- Database dan storage: Supabase PostgreSQL dan Supabase Storage.
+- Database: MySQL / MariaDB (XAMPP).
+- Storage: filesystem lokal.
 - Runtime: Node.js 20+.
 
 ## Struktur Project
@@ -36,194 +38,164 @@ Aplikasi full-stack untuk mengelola absensi PKL, izin, logbook harian, dan penda
 │   └── vite.config.js
 ├── server/
 │   ├── config/
+│   │   ├── db.js        # MySQL connection pool
+│   │   └── storage.js   # Local filesystem storage
 │   ├── middleware/
 │   ├── routes/
+│   ├── scripts/         # seed script
 │   ├── package.json
 │   └── server.js
-├── database.sql
-├── add_izin_columns_to_attendances.sql
-├── create_izin_table.sql
-├── create_logbook_supabase.sql
-├── table_pendaftaran_supabase.sql
-├── fix_device_bindings_rls.sql
+├── database_mysql.sql   # Schema MySQL (import ke phpMyAdmin)
 ├── package.json
 └── README.md
 ```
 
 ## Halaman Aplikasi
 
-- `/` - login user absensi.
+- `/` - landing page.
+- `/absen` - login user absensi.
 - `/dashboard` - dashboard mahasiswa/anak SMK.
 - `/admin` - dashboard admin absensi.
 - `/pendaftaran` - form pendaftaran publik.
 - `/admin_pendaftaran` - dashboard admin pendaftaran.
 
-## Persiapan Environment
+## Cara Menjalankan Lokal (XAMPP + MySQL)
 
-Buat file `.env` di root project atau di folder `server/`.
+### 1. Persiapan XAMPP
+
+1. Install [XAMPP](https://www.apachefriends.org/).
+2. Start **Apache** dan **MySQL** dari XAMPP Control Panel.
+3. Buka phpMyAdmin di <http://localhost/phpmyadmin>.
+4. Buat database baru dengan nama: **`pkl`** (charset `utf8mb4_unicode_ci`).
+5. Pilih database `pkl`, klik tab **Import**, upload file `database_mysql.sql`, klik **Go**.
+
+### 2. Konfigurasi Environment
+
+Buat file `.env` di root project (atau copy dari `.env.example`):
 
 ```env
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=
+DB_NAME=pkl
+JWT_SECRET=<random-min-32-karakter>
 PORT=5000
 NODE_ENV=development
-
-SUPABASE_URL=https://xxxxxxxx.supabase.co
-SUPABASE_ANON_KEY=your_supabase_anon_key
-SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
-
-JWT_SECRET=your-minimum-32-character-secret
-PENDAFTARAN_BUCKET=pendaftaran-files
-
 BYPASS_WIFI_CHECK=true
-# BYPASS_TIME_CHECK=true
-# BYPASS_PAGI_ONLY=true
-# BYPASS_JEDA_CHECK=true
 ```
 
-Untuk frontend development, buat `client/.env` jika perlu:
+Untuk generate JWT_SECRET yang aman:
 
-```env
-VITE_API_URL=http://localhost:5000/api
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
-Catatan:
-
-- `SUPABASE_SERVICE_ROLE_KEY` disarankan untuk backend karena beberapa fitur admin perlu akses penuh.
-- `BYPASS_WIFI_CHECK=true` hanya untuk development. Untuk production gunakan `false`.
-- `PENDAFTARAN_BUCKET` default-nya `pendaftaran-files`.
-
-## Setup Database dan Storage
-
-Jalankan file SQL berikut di Supabase SQL Editor sesuai kebutuhan:
-
-1. `database.sql` untuk tabel utama user, absensi, dan device binding.
-2. `add_izin_columns_to_attendances.sql` atau `create_izin_table.sql` untuk fitur izin.
-3. `create_logbook_supabase.sql` untuk fitur logbook.
-4. `table_pendaftaran_supabase.sql` untuk fitur pendaftaran.
-5. `fix_device_bindings_rls.sql` jika perlu memperbaiki policy RLS device binding.
-
-Buat bucket Supabase Storage:
-
-```text
-pendaftaran-files
-```
-
-Set bucket menjadi public agar PDF pendaftar bisa dipreview dari aplikasi.
-
-## Instalasi
-
-Install dependency root, server, dan client:
+### 3. Install Dependency & Build
 
 ```bash
 npm install
-```
-
-Script `postinstall` di root akan menjalankan install untuk `server` dan `client`.
-
-Jika ingin manual:
-
-```bash
-cd server
-npm install
-
-cd ../client
-npm install
-```
-
-## Menjalankan Development
-
-Terminal 1 - backend:
-
-```bash
-npm run dev
-```
-
-Backend berjalan di:
-
-```text
-http://localhost:5000
-```
-
-Terminal 2 - frontend:
-
-```bash
-npm run dev:frontend
-```
-
-Frontend berjalan di:
-
-```text
-http://localhost:5173
-```
-
-## Build Production
-
-Build frontend:
-
-```bash
 npm run build
 ```
 
-Jalankan backend yang sekaligus serve hasil build React:
+`npm run build` akan menginstall dependency server + client dan membangun frontend React.
+
+### 4. Seed Data (Opsional tapi Disarankan)
+
+```bash
+npm run seed
+```
+
+Script ini akan membuat akun default:
+
+| Akun                  | Username/Nama | Password      |
+|-----------------------|---------------|---------------|
+| Admin absensi         | `admin`       | `admin123`    |
+| Admin pendaftaran     | `admin`       | `admin123`    |
+| Sample mahasiswa      | `mahasiswa01` | `mahasiswa123`|
+| Sample anak SMK       | `smk01`       | `smk123`      |
+
+### 5. Jalankan Aplikasi
 
 ```bash
 npm start
 ```
 
+Buka <http://localhost:5000> di browser.
+
+Untuk development frontend (hot reload), buka terminal kedua:
+
+```bash
+npm run dev:frontend
+```
+
+Frontend dev berjalan di <http://localhost:5173> (proxy `/api` ke backend).
+
+## Skrip NPM
+
+| Script               | Fungsi                                                      |
+|----------------------|-------------------------------------------------------------|
+| `npm start`          | Jalankan backend (serve frontend build + API)              |
+| `npm run dev`        | Sama dengan `npm start`                                    |
+| `npm run dev:frontend` | Jalankan Vite dev server (port 5173)                     |
+| `npm run build`      | Install deps + build frontend production                    |
+| `npm run build:frontend` | Build frontend saja                                    |
+| `npm run seed`       | Seed admin & sample user ke database MySQL                 |
+
 ## Endpoint Utama
 
 Public:
 
-- `GET /health`
-- `GET /api/check-ip`
-- `POST /api/login`
-- `POST /api/pendaftaran`
-- `POST /api/admin-pendaftaran/login`
-- `GET /api/admin-pendaftaran/list`
-- `POST /api/admin-pendaftaran/seed`
+- `GET /health` - cek status server + database.
+- `GET /api/check-ip` - cek IP (untuk debug WiFi kampus).
+- `POST /api/login` - login user.
+- `POST /api/pendaftaran` - submit pendaftaran (upload PDF).
+- `POST /api/admin-pendaftaran/login` - login admin pendaftaran.
+- `GET /api/admin-pendaftaran/list` - list admin pendaftaran.
+- `POST /api/admin-pendaftaran/seed` - seed admin default.
 
 Mahasiswa/anak SMK:
 
-- `POST /api/absen`
-- `GET /api/riwayat`
-- `POST /api/izin`
-- `GET /api/izin`
-- `DELETE /api/izin/:id`
-- `GET /api/logbook`
-- `GET /api/logbook/today`
-- `POST /api/logbook`
-- `PUT /api/logbook/:id`
-- `POST /api/logbook/:id/submit`
-- `DELETE /api/logbook/:id`
+- `POST /api/absen` - submit absensi (perlu token + WiFi kampus).
+- `GET /api/riwayat` - lihat riwayat absensi sendiri.
+- `POST /api/izin` - submit izin.
+- `GET /api/izin` - lihat izin sendiri.
+- `DELETE /api/izin/:id` - batalkan izin.
+- `GET /api/logbook` - list logbook sendiri.
+- `GET /api/logbook/today` - logbook hari ini.
+- `POST /api/logbook` - buat draft logbook.
+- `PUT /api/logbook/:id` - update draft.
+- `POST /api/logbook/:id/submit` - submit logbook.
+- `DELETE /api/logbook/:id` - hapus draft.
 
-Admin:
+Admin (absensi):
 
-- `GET /api/admin/stats`
-- `GET /api/admin/attendance-today`
-- `GET /api/admin/students`
-- `GET /api/admin/attendance/:nama`
-- `GET /api/admin/devices`
-- `DELETE /api/admin/devices/:deviceId`
-- `GET /api/admin/users`
-- `POST /api/admin/users`
-- `POST /api/admin/users/:id/reset-password`
-- `DELETE /api/admin/users/:id`
-- `GET /api/admin/report`
-- `GET /api/admin/izin`
-- `PUT /api/admin/izin/:id`
-- `GET /api/admin/logbook`
-- `GET /api/admin/logbook/:id`
-- `POST /api/admin/logbook/:id/reset`
-- `DELETE /api/admin/logbook/:id`
+- `GET /api/admin/stats` - statistik dashboard.
+- `GET /api/admin/attendance-today` - rekap absensi hari ini.
+- `GET /api/admin/students` - list mahasiswa.
+- `GET /api/admin/attendance/:nama` - detail absensi 1 mahasiswa.
+- `GET /api/admin/devices` - list device terikat.
+- `DELETE /api/admin/devices/:deviceId` - unbind device.
+- `GET /api/admin/users` - list semua user.
+- `POST /api/admin/users` - buat user baru.
+- `POST /api/admin/users/:id/reset-password` - reset password.
+- `DELETE /api/admin/users/:id` - hapus user.
+- `GET /api/admin/report` - laporan absensi.
+- `GET /api/admin/izin` - list semua izin.
+- `PUT /api/admin/izin/:id` - approve/reject izin.
+- `GET /api/admin/logbook` - list semua logbook.
+- `POST /api/admin/logbook/:id/reset` - reset logbook ke draft.
+- `DELETE /api/admin/logbook/:id` - hapus logbook.
 
 Admin pendaftaran:
 
-- `GET /api/pendaftaran`
-- `PUT /api/pendaftaran/:id`
-- `DELETE /api/pendaftaran/:id`
-- `GET /api/pendaftaran/file/:id/:type`
-- `GET /api/pendaftaran/file-url/:id/:type`
-- `POST /api/admin-pendaftaran/create`
-- `DELETE /api/admin-pendaftaran/:id`
+- `GET /api/pendaftaran` - list pendaftar.
+- `PUT /api/pendaftaran/:id` - assign divisi.
+- `DELETE /api/pendaftaran/:id` - hapus pendaftar + file.
+- `GET /api/pendaftaran/file/:id/:type` - stream PDF untuk preview.
+- `GET /api/pendaftaran/file-url/:id/:type` - URL publik file.
+- `POST /api/admin-pendaftaran/create` - buat admin baru.
+- `DELETE /api/admin-pendaftaran/:id` - hapus admin.
 
 ## Aturan Absensi
 
@@ -249,9 +221,20 @@ Form pendaftaran menerima:
 
 Pendaftar pertama sampai urutan ke-30 diberi status `priority`, sisanya `pending`. Admin pendaftaran dapat assign divisi dengan batas maksimal 6 peserta per divisi.
 
+File PDF disimpan di `server/uploads/pendaftaran/<pendaftar_id>/` dan di-serve via `/uploads/...`.
+
 ## Catatan Keamanan
 
 - Jangan commit file `.env` berisi kredensial asli.
 - Gunakan `JWT_SECRET` kuat minimal 32 karakter.
-- Gunakan `BYPASS_WIFI_CHECK=false` di production.
-- Simpan service role key hanya di backend/server environment.
+- Untuk production non-lokal, set `BYPASS_WIFI_CHECK=false`.
+- File upload tidak di-authenticate (preview publik); pastikan folder `server/uploads/` tidak terekspose langsung via web server lain.
+
+## Migrasi dari Supabase
+
+Jika sebelumnya project ini pakai Supabase, struktur tabel & API response identik sehingga frontend tidak perlu diubah. Yang berubah:
+
+- `database.sql` (PostgreSQL) → `database_mysql.sql` (MySQL).
+- Supabase client (`@supabase/supabase-js`) → `mysql2/promise` (lihat `server/config/db.js`).
+- Supabase Storage → folder lokal `server/uploads/` (lihat `server/config/storage.js`).
+- Environment variable `SUPABASE_URL/KEY` → `DB_HOST/USER/PASSWORD/NAME`.

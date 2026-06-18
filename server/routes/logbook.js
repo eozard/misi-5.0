@@ -1,6 +1,6 @@
 /*
  * ============================================================================
- * ROUTES: LOGBOOK
+ * ROUTES: LOGBOOK (MySQL Version)
  * ============================================================================
  * Endpoint untuk logbook mahasiswa PKL.
  *
@@ -27,13 +27,12 @@
  */
 
 import express from "express";
-import { supabase } from "../config/supabase.js";
+import { pool } from "../config/db.js";
 import { verifyToken, isMahasiswa, isAdmin } from "../middleware/auth.js";
 
 const router = express.Router();
 
 const todayDate = () => {
-  // YYYY-MM-DD in UTC+7 (WIB)
   const now = new Date();
   const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000);
   return wib.toISOString().slice(0, 10);
@@ -54,112 +53,110 @@ const formatLogbook = (row) => ({
 });
 
 /*
- * ENDPOINT: GET /api/logbook
- * List logbook milik user yang login, urut tanggal DESC
- * Query: ?from=YYYY-MM-DD&to=YYYY-MM-DD&status=draft|submitted
+ * GET /api/logbook - List logbook milik user yang login
  */
 router.get("/logbook", verifyToken, isMahasiswa, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { from, to, status } = req.query;
-    let query = supabase
-      .from("logbook")
-      .select("*")
-      .eq("nama", req.user.nama)
-      .order("tanggal", { ascending: false });
+    const where = ["nama = ?"];
+    const params = [req.user.nama];
 
-    if (from) query = query.gte("tanggal", from);
-    if (to) query = query.lte("tanggal", to);
-    if (status) query = query.eq("status", status);
-
-    const { data, error } = await query;
-    if (error) {
-      console.error("Fetch logbook error:", error);
-      return res.status(500).json({ success: false, message: error.message });
+    if (from) {
+      where.push("tanggal >= ?");
+      params.push(from);
     }
+    if (to) {
+      where.push("tanggal <= ?");
+      params.push(to);
+    }
+    if (status) {
+      where.push("status = ?");
+      params.push(status);
+    }
+
+    const [rows] = await conn.query(
+      `SELECT * FROM logbook WHERE ${where.join(" AND ")}
+       ORDER BY tanggal DESC`,
+      params,
+    );
     return res.json({
       success: true,
-      data: (data || []).map(formatLogbook),
+      data: rows.map(formatLogbook),
     });
   } catch (err) {
     console.error("Fetch logbook error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 
 /*
- * ENDPOINT: GET /api/logbook/today
- * Ambil logbook hari ini (kalau ada), untuk auto-fill form
+ * GET /api/logbook/today
  */
 router.get("/logbook/today", verifyToken, isMahasiswa, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const today = todayDate();
-    const { data, error } = await supabase
-      .from("logbook")
-      .select("*")
-      .eq("nama", req.user.nama)
-      .eq("tanggal", today)
-      .maybeSingle();
-
-    if (error) {
-      return res.status(500).json({ success: false, message: error.message });
-    }
-    return res.json({
-      success: true,
-      data: data ? formatLogbook(data) : null,
-      tanggal: today,
-    });
+    const [rows] = await conn.query(
+      "SELECT * FROM logbook WHERE nama = ? AND tanggal = ? LIMIT 1",
+      [req.user.nama, today],
+    );
+    const data = rows[0] ? formatLogbook(rows[0]) : null;
+    return res.json({ success: true, data, tanggal: today });
   } catch (err) {
     console.error("Fetch today logbook error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 
 /*
- * ENDPOINT: GET /api/logbook/:id
- * Detail 1 logbook (mahasiswa hanya bisa akses milik sendiri)
+ * GET /api/logbook/:id
  */
 router.get("/logbook/:id", verifyToken, isMahasiswa, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
-      return res.status(400).json({ success: false, message: "ID tidak valid" });
+      return res
+        .status(400)
+        .json({ success: false, message: "ID tidak valid" });
     }
 
-    const { data, error } = await supabase
-      .from("logbook")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (error || !data) {
+    const [rows] = await conn.query(
+      "SELECT * FROM logbook WHERE id = ? LIMIT 1",
+      [id],
+    );
+    if (rows.length === 0) {
       return res
         .status(404)
         .json({ success: false, message: "Logbook tidak ditemukan" });
     }
-
+    const data = rows[0];
     if (data.nama !== req.user.nama) {
       return res
         .status(403)
         .json({ success: false, message: "Anda tidak punya akses ke logbook ini" });
     }
-
     return res.json({ success: true, data: formatLogbook(data) });
   } catch (err) {
     console.error("Fetch logbook error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 
 /*
- * ENDPOINT: POST /api/logbook
- * Create draft logbook baru
- * Body: { kegiatan, kendala? }
- * Tanggal otomatis di-lock ke hari ini (tidak bisa dipilih tanggal lain)
+ * POST /api/logbook
  */
 router.post("/logbook", verifyToken, isMahasiswa, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { kegiatan, kendala } = req.body;
-
     if (!kegiatan || !kegiatan.trim()) {
       return res
         .status(400)
@@ -168,64 +165,59 @@ router.post("/logbook", verifyToken, isMahasiswa, async (req, res) => {
 
     const tanggalFinal = todayDate();
 
-    // Cek duplikat
-    const { data: existing } = await supabase
-      .from("logbook")
-      .select("id, status")
-      .eq("nama", req.user.nama)
-      .eq("tanggal", tanggalFinal)
-      .maybeSingle();
-
-    if (existing) {
+    const [existingRows] = await conn.query(
+      "SELECT id, status FROM logbook WHERE nama = ? AND tanggal = ? LIMIT 1",
+      [req.user.nama, tanggalFinal],
+    );
+    if (existingRows.length > 0) {
       return res.status(409).json({
         success: false,
-        message: `Sudah ada logbook untuk hari ini (status: ${existing.status})`,
-        data: formatLogbook(existing),
+        message: `Sudah ada logbook untuk hari ini (status: ${existingRows[0].status})`,
+        data: formatLogbook(existingRows[0]),
       });
     }
 
-    const { data, error } = await supabase
-      .from("logbook")
-      .insert([
-        {
-          user_id: req.user.id,
-          nama: req.user.nama,
-          kelompok: req.user.kelompok,
-          tanggal: tanggalFinal,
-          kegiatan: kegiatan.trim(),
-          kendala: kendala ? kendala.trim() : null,
-          status: "draft",
-        },
-      ])
-      .select()
-      .single();
-
-    if (error) {
-      console.error("Create logbook error:", error);
-      return res.status(500).json({ success: false, message: error.message });
-    }
-
+    const [insertRes] = await conn.query(
+      `INSERT INTO logbook
+        (user_id, nama, kelompok, tanggal, kegiatan, kendala, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'draft')`,
+      [
+        req.user.id,
+        req.user.nama,
+        req.user.kelompok,
+        tanggalFinal,
+        kegiatan.trim(),
+        kendala ? kendala.trim() : null,
+      ],
+    );
+    const [rows] = await conn.query(
+      "SELECT * FROM logbook WHERE id = ?",
+      [insertRes.insertId],
+    );
     return res.status(201).json({
       success: true,
       message: "Logbook berhasil dibuat",
-      data: formatLogbook(data),
+      data: formatLogbook(rows[0]),
     });
   } catch (err) {
     console.error("Create logbook error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 
 /*
- * ENDPOINT: PUT /api/logbook/:id
- * Update draft (hanya kalau status draft & milik sendiri)
- * Body: { kegiatan, kendala }
+ * PUT /api/logbook/:id
  */
 router.put("/logbook/:id", verifyToken, isMahasiswa, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
-      return res.status(400).json({ success: false, message: "ID tidak valid" });
+      return res
+        .status(400)
+        .json({ success: false, message: "ID tidak valid" });
     }
 
     const { kegiatan, kendala } = req.body;
@@ -235,25 +227,22 @@ router.put("/logbook/:id", verifyToken, isMahasiswa, async (req, res) => {
         .json({ success: false, message: "Kegiatan wajib diisi" });
     }
 
-    // Ambil existing
-    const { data: existing, error: fetchError } = await supabase
-      .from("logbook")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (fetchError || !existing) {
+    const [existingRows] = await conn.query(
+      "SELECT * FROM logbook WHERE id = ? LIMIT 1",
+      [id],
+    );
+    if (existingRows.length === 0) {
       return res
         .status(404)
         .json({ success: false, message: "Logbook tidak ditemukan" });
     }
+    const existing = existingRows[0];
 
     if (existing.nama !== req.user.nama) {
       return res
         .status(403)
         .json({ success: false, message: "Anda tidak punya akses ke logbook ini" });
     }
-
     if (existing.status !== "draft") {
       return res.status(400).json({
         success: false,
@@ -261,136 +250,119 @@ router.put("/logbook/:id", verifyToken, isMahasiswa, async (req, res) => {
       });
     }
 
-    const { data, error } = await supabase
-      .from("logbook")
-      .update({
-        kegiatan: kegiatan.trim(),
-        kendala: kendala ? kendala.trim() : null,
-      })
-      .eq("id", id)
-      .select()
-      .single();
-
-    if (error) {
-      console.error("Update logbook error:", error);
-      return res.status(500).json({ success: false, message: error.message });
-    }
-
+    await conn.query(
+      "UPDATE logbook SET kegiatan = ?, kendala = ? WHERE id = ?",
+      [kegiatan.trim(), kendala ? kendala.trim() : null, id],
+    );
+    const [rows] = await conn.query("SELECT * FROM logbook WHERE id = ?", [id]);
     return res.json({
       success: true,
       message: "Logbook berhasil diupdate",
-      data: formatLogbook(data),
+      data: formatLogbook(rows[0]),
     });
   } catch (err) {
     console.error("Update logbook error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 
 /*
- * ENDPOINT: POST /api/logbook/:id/submit
- * Submit logbook (status -> submitted, lock)
+ * POST /api/logbook/:id/submit
  */
 router.post("/logbook/:id/submit", verifyToken, isMahasiswa, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
-      return res.status(400).json({ success: false, message: "ID tidak valid" });
+      return res
+        .status(400)
+        .json({ success: false, message: "ID tidak valid" });
     }
 
-    const { data: existing, error: fetchError } = await supabase
-      .from("logbook")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (fetchError || !existing) {
+    const [existingRows] = await conn.query(
+      "SELECT * FROM logbook WHERE id = ? LIMIT 1",
+      [id],
+    );
+    if (existingRows.length === 0) {
       return res
         .status(404)
         .json({ success: false, message: "Logbook tidak ditemukan" });
     }
+    const existing = existingRows[0];
 
     if (existing.nama !== req.user.nama) {
       return res
         .status(403)
         .json({ success: false, message: "Anda tidak punya akses ke logbook ini" });
     }
-
     if (existing.status === "submitted") {
       return res
         .status(400)
         .json({ success: false, message: "Logbook sudah submitted" });
     }
 
-    const { data, error } = await supabase
-      .from("logbook")
-      .update({
-        status: "submitted",
-        submitted_at: new Date().toISOString(),
-      })
-      .eq("id", id)
-      .select()
-      .single();
-
-    if (error) {
-      return res.status(500).json({ success: false, message: error.message });
-    }
-
+    await conn.query(
+      "UPDATE logbook SET status = 'submitted', submitted_at = NOW() WHERE id = ?",
+      [id],
+    );
+    const [rows] = await conn.query("SELECT * FROM logbook WHERE id = ?", [id]);
     return res.json({
       success: true,
       message: "Logbook berhasil di-submit",
-      data: formatLogbook(data),
+      data: formatLogbook(rows[0]),
     });
   } catch (err) {
     console.error("Submit logbook error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 
 /*
- * ENDPOINT: DELETE /api/logbook/:id
- * Hapus draft (milik sendiri, hanya kalau status draft)
+ * DELETE /api/logbook/:id
  */
 router.delete("/logbook/:id", verifyToken, isMahasiswa, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
-      return res.status(400).json({ success: false, message: "ID tidak valid" });
+      return res
+        .status(400)
+        .json({ success: false, message: "ID tidak valid" });
     }
 
-    const { data: existing } = await supabase
-      .from("logbook")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (!existing) {
+    const [existingRows] = await conn.query(
+      "SELECT * FROM logbook WHERE id = ? LIMIT 1",
+      [id],
+    );
+    if (existingRows.length === 0) {
       return res
         .status(404)
         .json({ success: false, message: "Logbook tidak ditemukan" });
     }
+    const existing = existingRows[0];
 
     if (existing.nama !== req.user.nama) {
       return res
         .status(403)
         .json({ success: false, message: "Anda tidak punya akses ke logbook ini" });
     }
-
     if (existing.status !== "draft") {
       return res
         .status(400)
         .json({ success: false, message: "Hanya draft yang bisa dihapus" });
     }
 
-    const { error } = await supabase.from("logbook").delete().eq("id", id);
-    if (error) {
-      return res.status(500).json({ success: false, message: error.message });
-    }
-
+    await conn.query("DELETE FROM logbook WHERE id = ?", [id]);
     return res.json({ success: true, message: "Logbook berhasil dihapus" });
   } catch (err) {
     console.error("Delete logbook error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 
@@ -400,124 +372,141 @@ router.delete("/logbook/:id", verifyToken, isMahasiswa, async (req, res) => {
 
 /*
  * GET /api/admin/logbook
- * Query: ?nama=...&from=YYYY-MM-DD&to=YYYY-MM-DD&status=draft|submitted&kelompok=...
  */
 router.get("/admin/logbook", verifyToken, isAdmin, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { nama, from, to, status, kelompok } = req.query;
-    let query = supabase
-      .from("logbook")
-      .select("*")
-      .order("tanggal", { ascending: false })
-      .order("created_at", { ascending: false });
+    const where = [];
+    const params = [];
 
-    if (nama) query = query.eq("nama", nama);
-    if (from) query = query.gte("tanggal", from);
-    if (to) query = query.lte("tanggal", to);
-    if (status) query = query.eq("status", status);
-    if (kelompok) query = query.eq("kelompok", kelompok);
-
-    const { data, error } = await query;
-    if (error) {
-      return res.status(500).json({ success: false, message: error.message });
+    if (nama) {
+      where.push("nama = ?");
+      params.push(nama);
     }
+    if (from) {
+      where.push("tanggal >= ?");
+      params.push(from);
+    }
+    if (to) {
+      where.push("tanggal <= ?");
+      params.push(to);
+    }
+    if (status) {
+      where.push("status = ?");
+      params.push(status);
+    }
+    if (kelompok) {
+      where.push("kelompok = ?");
+      params.push(kelompok);
+    }
+
+    const sql = `SELECT * FROM logbook
+                 ${where.length ? "WHERE " + where.join(" AND ") : ""}
+                 ORDER BY tanggal DESC, created_at DESC`;
+    const [rows] = await conn.query(sql, params);
     return res.json({
       success: true,
-      data: (data || []).map(formatLogbook),
-      total: (data || []).length,
+      data: rows.map(formatLogbook),
+      total: rows.length,
     });
   } catch (err) {
     console.error("Admin fetch logbook error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 
 /*
  * GET /api/admin/logbook/:id
- * Detail (admin boleh akses semua)
  */
 router.get("/admin/logbook/:id", verifyToken, isAdmin, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
-      return res.status(400).json({ success: false, message: "ID tidak valid" });
+      return res
+        .status(400)
+        .json({ success: false, message: "ID tidak valid" });
     }
-
-    const { data, error } = await supabase
-      .from("logbook")
-      .select("*")
-      .eq("id", id)
-      .single();
-
-    if (error || !data) {
+    const [rows] = await conn.query(
+      "SELECT * FROM logbook WHERE id = ? LIMIT 1",
+      [id],
+    );
+    if (rows.length === 0) {
       return res
         .status(404)
         .json({ success: false, message: "Logbook tidak ditemukan" });
     }
-
-    return res.json({ success: true, data: formatLogbook(data) });
+    return res.json({ success: true, data: formatLogbook(rows[0]) });
   } catch (err) {
     console.error("Admin fetch logbook error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 
 /*
  * POST /api/admin/logbook/:id/reset
- * Reset submitted -> draft (re-open edit)
  */
 router.post("/admin/logbook/:id/reset", verifyToken, isAdmin, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
-      return res.status(400).json({ success: false, message: "ID tidak valid" });
+      return res
+        .status(400)
+        .json({ success: false, message: "ID tidak valid" });
     }
-
-    const { data, error } = await supabase
-      .from("logbook")
-      .update({
-        status: "draft",
-        submitted_at: null,
-      })
-      .eq("id", id)
-      .select()
-      .single();
-
-    if (error) {
-      return res.status(500).json({ success: false, message: error.message });
+    await conn.query(
+      "UPDATE logbook SET status = 'draft', submitted_at = NULL WHERE id = ?",
+      [id],
+    );
+    const [rows] = await conn.query("SELECT * FROM logbook WHERE id = ?", [id]);
+    if (rows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Logbook tidak ditemukan" });
     }
-
     return res.json({
       success: true,
       message: "Logbook di-reset ke draft",
-      data: formatLogbook(data),
+      data: formatLogbook(rows[0]),
     });
   } catch (err) {
     console.error("Reset logbook error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 
 /*
  * DELETE /api/admin/logbook/:id
- * Hapus logbook (admin only)
  */
 router.delete("/admin/logbook/:id", verifyToken, isAdmin, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const id = parseInt(req.params.id, 10);
     if (isNaN(id)) {
-      return res.status(400).json({ success: false, message: "ID tidak valid" });
+      return res
+        .status(400)
+        .json({ success: false, message: "ID tidak valid" });
     }
-
-    const { error } = await supabase.from("logbook").delete().eq("id", id);
-    if (error) {
-      return res.status(500).json({ success: false, message: error.message });
+    const [res1] = await conn.query("DELETE FROM logbook WHERE id = ?", [id]);
+    if (res1.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Logbook tidak ditemukan" });
     }
-
     return res.json({ success: true, message: "Logbook berhasil dihapus" });
   } catch (err) {
     console.error("Admin delete logbook error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 

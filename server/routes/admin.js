@@ -1,61 +1,50 @@
 /*
- * Admin routes: stats, users, devices, reports, izin approvals.
+ * Admin routes: stats, users, devices, reports, izin approvals. (MySQL)
  */
 import express from "express";
 import bcrypt from "bcryptjs";
-import { supabase } from "../config/supabase.js";
+import { pool, parseDevices } from "../config/db.js";
 
 const router = express.Router();
 
-// GET /api/admin/stats
-// Ringkasan statistik untuk kartu dashboard
+const todayWIB = () => {
+  const now = new Date();
+  const wib = new Date(now.getTime() + 7 * 60 * 60 * 1000);
+  return wib.toISOString().slice(0, 10);
+};
+
+/*
+ * GET /api/admin/stats
+ */
 export const getStats = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     console.log("📊 Get admin stats");
 
-    // Total mahasiswa
-    const { data: mahasiswa, error: mahasiswaError } = await supabase
-      .from("users")
-      .select("id")
-      .eq("role", "mahasiswa");
+    const [mahasiswaRows] = await conn.query(
+      "SELECT id FROM users WHERE role = 'mahasiswa'",
+    );
+    const [anakSmkRows] = await conn.query(
+      "SELECT id FROM users WHERE role = 'anak_smk'",
+    );
+    const today = todayWIB();
+    const [hadirRows] = await conn.query(
+      "SELECT nama FROM attendances WHERE tanggal = ? AND status = 'hadir'",
+      [today],
+    );
+    const [izinRows] = await conn.query(
+      "SELECT nama FROM attendances WHERE tanggal = ? AND status = 'izin'",
+      [today],
+    );
 
-    // Total anak SMK
-    const { data: anakSmk, error: anakSmkError } = await supabase
-      .from("users")
-      .select("id")
-      .eq("role", "anak_smk");
-
-    // Hadir hari ini (count per siswa unik, bukan per record)
-    const today = new Date().toISOString().split("T")[0];
-    const { data: hadirRaw, error: hadirError } = await supabase
-      .from("attendances")
-      .select("nama")
-      .eq("tanggal", today)
-      .eq("status", "hadir");
-
-    // Izin hari ini (count per siswa unik)
-    const { data: izinRaw, error: izinError } = await supabase
-      .from("attendances")
-      .select("nama")
-      .eq("tanggal", today)
-      .eq("status", "izin");
-
-    if (mahasiswaError || anakSmkError || hadirError || izinError) {
-      console.error("Stats error");
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    // Count unique siswa (jangan duplikat pagi/sore)
-    const hadirUnique = new Set((hadirRaw || []).map((a) => a.nama));
-    const izinUnique = new Set((izinRaw || []).map((a) => a.nama));
+    const hadirUnique = new Set(hadirRows.map((a) => a.nama));
+    const izinUnique = new Set(izinRows.map((a) => a.nama));
 
     return res.json({
       success: true,
       stats: {
-        totalMahasiswa: mahasiswa?.length || 0,
-        totalAnakSmk: anakSmk?.length || 0,
+        totalMahasiswa: mahasiswaRows.length,
+        totalAnakSmk: anakSmkRows.length,
         hadirToday: hadirUnique.size,
         izinToday: izinUnique.size,
       },
@@ -63,33 +52,27 @@ export const getStats = async (req, res) => {
   } catch (error) {
     console.error("Get stats error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// GET /api/admin/attendance-today
-// Rekap absensi hari ini (pagi/sore)
+/*
+ * GET /api/admin/attendance-today
+ */
 export const getAttendanceToday = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
-    const today = new Date().toISOString().split("T")[0];
-
+    const today = todayWIB();
     console.log(`📋 Get attendance untuk: ${today}`);
 
-    const { data: attendances, error } = await supabase
-      .from("attendances")
-      .select("*")
-      .eq("tanggal", today)
-      .order("nama", { ascending: true });
+    const [rows] = await conn.query(
+      "SELECT * FROM attendances WHERE tanggal = ? ORDER BY nama ASC",
+      [today],
+    );
 
-    if (error) {
-      console.error("Get attendance error:", error.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    // Transform data ke format yang lebih user-friendly
     const result = {};
-    (attendances || []).forEach((att) => {
+    rows.forEach((att) => {
       if (!result[att.nama]) {
         result[att.nama] = {
           nama: att.nama,
@@ -99,83 +82,60 @@ export const getAttendanceToday = async (req, res) => {
         };
       }
       if (att.sesi === "pagi") {
-        result[att.nama].pagi = {
-          jam_masuk: att.jam_masuk,
-          status: att.status,
-        };
+        result[att.nama].pagi = { jam_masuk: att.jam_masuk, status: att.status };
       } else if (att.sesi === "sore") {
-        result[att.nama].sore = {
-          jam_masuk: att.jam_masuk,
-          status: att.status,
-        };
+        result[att.nama].sore = { jam_masuk: att.jam_masuk, status: att.status };
       }
     });
 
-    return res.json({
-      success: true,
-      data: Object.values(result),
-    });
+    return res.json({ success: true, data: Object.values(result) });
   } catch (error) {
     console.error("Get attendance today error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// GET /api/admin/students
-// Daftar mahasiswa/anak SMK
+/*
+ * GET /api/admin/students
+ */
 export const getStudents = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
-    console.log("� Get all students");
-
-    const { data: students, error } = await supabase
-      .from("users")
-      .select("nama, role, kelompok")
-      .in("role", ["mahasiswa", "anak_smk"])
-      .order("nama", { ascending: true });
-
-    if (error) {
-      console.error("Get students error:", error.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    return res.json({
-      success: true,
-      students: students || [],
-    });
+    console.log("📋 Get all students");
+    const [rows] = await conn.query(
+      `SELECT nama, role, kelompok FROM users
+       WHERE role IN ('mahasiswa','anak_smk')
+       ORDER BY nama ASC`,
+    );
+    return res.json({ success: true, students: rows });
   } catch (error) {
     console.error("Get students error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// GET /api/admin/attendance/:nama
-// Riwayat absensi per siswa
+/*
+ * GET /api/admin/attendance/:nama
+ */
 export const getStudentAttendance = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { nama } = req.params;
-
     console.log(`📖 Get attendance untuk: ${nama}`);
 
-    const { data: attendances, error } = await supabase
-      .from("attendances")
-      .select("*")
-      .eq("nama", nama)
-      .order("tanggal", { ascending: false });
+    const [rows] = await conn.query(
+      "SELECT * FROM attendances WHERE nama = ? ORDER BY tanggal DESC",
+      [nama],
+    );
 
-    if (error) {
-      console.error("Get student attendance error:", error.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    // Calculate summary
     let totalPagi = 0,
       totalSore = 0,
       totalAlpa = 0;
-    (attendances || []).forEach((att) => {
+    rows.forEach((att) => {
       if (att.status === "hadir") {
         if (att.sesi === "pagi") totalPagi++;
         else if (att.sesi === "sore") totalSore++;
@@ -186,515 +146,366 @@ export const getStudentAttendance = async (req, res) => {
 
     return res.json({
       success: true,
-      data: attendances || [],
+      data: rows,
       summary: { totalPagi, totalSore, totalAlpa },
     });
   } catch (error) {
     console.error("Get student attendance error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// GET /api/admin/devices
-// Daftar semua device terikat
+/*
+ * GET /api/admin/devices
+ */
 export const getDevices = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     console.log("📱 Get all devices");
-
-    const { data: devices, error } = await supabase
-      .from("device_bindings")
-      .select("device_id, user_name, kelompok, last_used")
-      .order("last_used", { ascending: false });
-
-    if (error) {
-      console.error("Get devices error:", error.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    return res.json({
-      success: true,
-      devices: devices || [],
-    });
+    const [rows] = await conn.query(
+      `SELECT device_id, user_name, kelompok, last_used
+       FROM device_bindings ORDER BY last_used DESC`,
+    );
+    return res.json({ success: true, devices: rows });
   } catch (error) {
     console.error("Get devices error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// DELETE /api/admin/devices/:deviceId
-// Hapus ikatan device tertentu dari device_bindings dan users.devices array
+/*
+ * DELETE /api/admin/devices/:deviceId
+ */
 export const deleteDevice = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { deviceId } = req.params;
-
     console.log(`🗑️ Delete device: ${deviceId}`);
 
-    // STEP 1: Cari user yang punya device ini
-    const { data: deviceBinding, error: bindingError } = await supabase
-      .from("device_bindings")
-      .select("user_name")
-      .eq("device_id", deviceId)
-      .single();
-
-    if (bindingError || !deviceBinding) {
-      console.error("Device binding not found:", bindingError?.message);
-      return res.status(404).json({
-        success: false,
-        message: "Device tidak ditemukan",
-      });
-    }
-
-    const userName = deviceBinding.user_name;
-
-    // STEP 2: Hapus dari device_bindings
-    const { error: deleteBindingError } = await supabase
-      .from("device_bindings")
-      .delete()
-      .eq("device_id", deviceId);
-
-    if (deleteBindingError) {
-      console.error(
-        "Delete device_bindings error:",
-        deleteBindingError.message,
-      );
-      return res.status(500).json({
-        success: false,
-        message: "Database error",
-      });
-    }
-
-    // STEP 3: Hapus dari users.devices array
-    const { data: user, error: userError } = await supabase
-      .from("users")
-      .select("devices")
-      .eq("nama", userName)
-      .single();
-
-    if (userError || !user) {
-      console.error("User not found:", userError?.message);
-      return res.status(404).json({
-        success: false,
-        message: "User tidak ditemukan",
-      });
-    }
-
-    // Filter device yang TIDAK sama dengan deviceId yang dihapus
-    const updatedDevices = (user.devices || []).filter(
-      (d) => d.deviceId !== deviceId,
+    // STEP 1: cari user pemilik
+    const [bindingRows] = await conn.query(
+      "SELECT user_name FROM device_bindings WHERE device_id = ? LIMIT 1",
+      [deviceId],
     );
-
-    // Update users.devices dengan array yang sudah difilter
-    const { error: updateError } = await supabase
-      .from("users")
-      .update({ devices: updatedDevices })
-      .eq("nama", userName);
-
-    if (updateError) {
-      console.error("Update users.devices error:", updateError.message);
-      return res.status(500).json({
-        success: false,
-        message: "Database error",
-      });
+    if (bindingRows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Device tidak ditemukan" });
     }
+    const userName = bindingRows[0].user_name;
+
+    // STEP 2: hapus dari device_bindings
+    await conn.query("DELETE FROM device_bindings WHERE device_id = ?", [
+      deviceId,
+    ]);
+
+    // STEP 3: bersihkan dari users.devices (JSON)
+    const [userRows] = await conn.query(
+      "SELECT devices FROM users WHERE nama = ? LIMIT 1",
+      [userName],
+    );
+    if (userRows.length === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User tidak ditemukan" });
+    }
+    const devices = parseDevices(userRows[0].devices);
+    const updated = devices.filter((d) => d.deviceId !== deviceId);
+    await conn.query("UPDATE users SET devices = ? WHERE nama = ?", [
+      JSON.stringify(updated),
+      userName,
+    ]);
 
     console.log(
-      `✅ Device ${deviceId} dihapus dari ${userName} (slot dari ${user.devices.length} → ${updatedDevices.length})`,
+      `✅ Device ${deviceId} dihapus dari ${userName} (slot ${devices.length} → ${updated.length})`,
     );
 
-    return res.json({
-      success: true,
-      message: "Device berhasil dihapus",
-    });
+    return res.json({ success: true, message: "Device berhasil dihapus" });
   } catch (error) {
     console.error("Delete device error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// GET /api/admin/users
-// Daftar user + hitung jumlah device
+/*
+ * GET /api/admin/users
+ */
 export const getUsers = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     console.log("👥 Get all users");
+    const [users] = await conn.query(
+      `SELECT id, nama, role, kelompok, devices, max_devices
+       FROM users ORDER BY nama ASC`,
+    );
+    const [bindings] = await conn.query(
+      "SELECT user_name FROM device_bindings",
+    );
 
-    const { data: users, error } = await supabase
-      .from("users")
-      .select("id, nama, role, kelompok, devices, max_devices")
-      .order("nama", { ascending: true });
-
-    if (error) {
-      console.error("Get users error:", error.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    const { data: deviceBindings, error: deviceError } = await supabase
-      .from("device_bindings")
-      .select("user_name");
-
-    if (deviceError) {
-      console.error("Get device bindings error:", deviceError.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    const deviceCounts = (deviceBindings || []).reduce((acc, binding) => {
-      if (!binding.user_name) return acc;
-      acc[binding.user_name] = (acc[binding.user_name] || 0) + 1;
+    const deviceCounts = bindings.reduce((acc, b) => {
+      if (!b.user_name) return acc;
+      acc[b.user_name] = (acc[b.user_name] || 0) + 1;
       return acc;
     }, {});
 
-    // Transform to add devices_count
-    const formattedUsers = (users || []).map((user) => ({
-      ...user,
-      devices_count: deviceCounts[user.nama] || 0,
+    const formatted = users.map((u) => ({
+      ...u,
+      devices: parseDevices(u.devices),
+      devices_count: deviceCounts[u.nama] || 0,
     }));
-
-    return res.json({
-      success: true,
-      users: formattedUsers,
-    });
+    return res.json({ success: true, users: formatted });
   } catch (error) {
     console.error("Get users error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// POST /api/admin/users/:id/reset-password
-// Admin mengganti password user
+/*
+ * POST /api/admin/users/:id/reset-password
+ */
 export const resetUserPassword = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { id } = req.params;
     const { password } = req.body;
 
     if (!id || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "User id dan password diperlukan",
-      });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        message: "Password minimal 6 karakter",
-      });
-    }
-
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const { data, error } = await supabase
-      .from("users")
-      .update({ password: hashedPassword })
-      .eq("id", id)
-      .select("id");
-
-    if (error) {
-      console.error("Reset password error:", error.message);
       return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
+        .status(400)
+        .json({ success: false, message: "User id dan password diperlukan" });
+    }
+    if (password.length < 6) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Password minimal 6 karakter" });
     }
 
-    if (!data || data.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "User tidak ditemukan",
-      });
+    const hashed = await bcrypt.hash(password, 10);
+    const [res1] = await conn.query(
+      "UPDATE users SET password = ? WHERE id = ?",
+      [hashed, id],
+    );
+    if (res1.affectedRows === 0) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User tidak ditemukan" });
     }
-
-    return res.json({
-      success: true,
-      message: "Password user berhasil direset",
-    });
+    return res.json({ success: true, message: "Password user berhasil direset" });
   } catch (error) {
     console.error("Reset password error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// DELETE /api/admin/users/:id
-// Hapus user (non-admin) + bersihkan device bindings
+/*
+ * DELETE /api/admin/users/:id
+ */
 export const deleteUser = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { id } = req.params;
-
     if (!id) {
       return res
         .status(400)
         .json({ success: false, message: "User id diperlukan" });
     }
 
-    const { data: user, error: userError } = await supabase
-      .from("users")
-      .select("id, nama, role")
-      .eq("id", id)
-      .single();
-
-    if (userError || !user) {
-      console.error("Get user error:", userError?.message);
+    const [userRows] = await conn.query(
+      "SELECT id, nama, role FROM users WHERE id = ? LIMIT 1",
+      [id],
+    );
+    if (userRows.length === 0) {
       return res
         .status(404)
         .json({ success: false, message: "User tidak ditemukan" });
     }
-
+    const user = userRows[0];
     if (user.role === "admin") {
       return res
         .status(403)
         .json({ success: false, message: "Tidak bisa hapus admin" });
     }
 
-    const { error: deleteBindingsError } = await supabase
-      .from("device_bindings")
-      .delete()
-      .eq("user_name", user.nama);
-
-    if (deleteBindingsError) {
-      console.error("Delete bindings error:", deleteBindingsError.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    const { error: deleteUserError } = await supabase
-      .from("users")
-      .delete()
-      .eq("id", id);
-
-    if (deleteUserError) {
-      console.error("Delete user error:", deleteUserError.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    return res.json({
-      success: true,
-      message: "User berhasil dihapus",
-    });
+    await conn.query("DELETE FROM device_bindings WHERE user_name = ?", [
+      user.nama,
+    ]);
+    await conn.query("DELETE FROM users WHERE id = ?", [id]);
+    return res.json({ success: true, message: "User berhasil dihapus" });
   } catch (error) {
     console.error("Delete user error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// POST /api/admin/users
-// Buat user baru (hash password)
+/*
+ * POST /api/admin/users
+ */
 export const createUser = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { nama, password, role, kelompok } = req.body;
-
     if (!nama || !password || !role || !kelompok) {
       return res.status(400).json({
         success: false,
         message: "Nama, password, role, dan kelompok diperlukan",
       });
     }
-
     console.log(`➕ Create user: ${nama} (${role})`);
 
-    // Check jika user sudah ada
-    const { data: existingUser, error: checkError } = await supabase
-      .from("users")
-      .select("id")
-      .eq("nama", nama);
-
-    if (checkError) {
-      console.error("Check user error:", checkError.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    if (existingUser && existingUser.length > 0) {
+    const [existing] = await conn.query(
+      "SELECT id FROM users WHERE nama = ? LIMIT 1",
+      [nama],
+    );
+    if (existing.length > 0) {
       return res
         .status(400)
         .json({ success: false, message: "User sudah ada" });
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create user
-    const { data: newUser, error: createError } = await supabase
-      .from("users")
-      .insert([
-        {
-          nama,
-          password: hashedPassword,
-          role,
-          kelompok,
-          devices: [],
-          max_devices: role === "admin" ? 999 : 2,
-        },
-      ])
-      .select();
-
-    if (createError) {
-      console.error("Create user error:", createError.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
+    const hashed = await bcrypt.hash(password, 10);
+    const maxDevices = role === "admin" ? 999 : 2;
+    const [insertRes] = await conn.query(
+      `INSERT INTO users (nama, password, role, kelompok, devices, max_devices)
+       VALUES (?, ?, ?, ?, ? , ?)`,
+      [nama, hashed, role, kelompok, JSON.stringify([]), maxDevices],
+    );
+    const [rows] = await conn.query(
+      "SELECT id, nama, role, kelompok, max_devices FROM users WHERE id = ?",
+      [insertRes.insertId],
+    );
     console.log(`✅ User ${nama} berhasil dibuat`);
-
-    return res.json({
-      success: true,
-      message: "User berhasil dibuat",
-      user: newUser?.[0],
-    });
+    return res.json({ success: true, message: "User berhasil dibuat", user: rows[0] });
   } catch (error) {
     console.error("Create user error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// GET /api/admin/report - filtered attendance report
+/*
+ * GET /api/admin/report
+ */
 export const getAttendanceReport = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { fromDate, toDate, kelompok, nama } = req.query;
-
     console.log(
       `📊 Get report: ${fromDate} to ${toDate}, kelompok: ${kelompok}, nama: ${nama}`,
     );
 
-    let query = supabase
-      .from("attendances")
-      .select("*")
-      .order("tanggal", { ascending: false })
-      .order("jam_masuk", { ascending: false });
-
-    // Apply date filter
+    const where = [];
+    const params = [];
     if (fromDate) {
-      query = query.gte("tanggal", fromDate);
+      where.push("tanggal >= ?");
+      params.push(fromDate);
     }
     if (toDate) {
-      query = query.lte("tanggal", toDate);
+      where.push("tanggal <= ?");
+      params.push(toDate);
     }
-
-    // Apply kelompok filter
     if (kelompok && kelompok !== "all") {
-      query = query.eq("kelompok", kelompok);
+      where.push("kelompok = ?");
+      params.push(kelompok);
     }
-
-    // Apply nama filter
     if (nama && nama !== "all") {
-      query = query.eq("nama", nama);
+      where.push("nama = ?");
+      params.push(nama);
     }
 
-    const { data: attendances, error } = await query;
+    const sql = `SELECT * FROM attendances
+                 ${where.length ? "WHERE " + where.join(" AND ") : ""}
+                 ORDER BY tanggal DESC, jam_masuk DESC`;
+    const [rows] = await conn.query(sql, params);
 
-    if (error) {
-      console.error("Get report error:", error.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    return res.json({
-      success: true,
-      data: attendances || [],
-      count: attendances?.length || 0,
-    });
+    return res.json({ success: true, data: rows, count: rows.length });
   } catch (error) {
     console.error("Get report error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// GET /api/admin/izin - Get all izin requests
-// GET /api/admin/izin - Lihat semua permohonan izin
-// Query izin dari tabel attendances dengan status='izin'
+/*
+ * GET /api/admin/izin
+ */
 export const getAllIzin = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     console.log("📋 Get all izin requests");
-
-    // Query izin dari tabel attendances (status='izin')
-    const { data: izinList, error } = await supabase
-      .from("attendances")
-      .select(
-        "id, nama, kelompok, tanggal, sesi, keterangan, bukti_url, status_approval, approved_by, approved_at, created_at",
-      )
-      .eq("status", "izin")
-      .order("tanggal", { ascending: false });
-
-    if (error) {
-      console.error("Get izin error:", error.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    return res.json({
-      success: true,
-      data: izinList || [],
-    });
+    const [rows] = await conn.query(
+      `SELECT id, nama, kelompok, tanggal, sesi, keterangan, bukti_url,
+              status_approval, approved_by, approved_at, created_at
+       FROM attendances WHERE status = 'izin'
+       ORDER BY tanggal DESC`,
+    );
+    return res.json({ success: true, data: rows });
   } catch (error) {
     console.error("Get izin error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// PUT /api/admin/izin/:id - Approve/Reject izin
-// Update status_approval di tabel attendances
+/*
+ * PUT /api/admin/izin/:id
+ */
 export const updateIzinStatus = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { id } = req.params;
-    const { status } = req.body; // 'approved' or 'rejected'
+    const { status } = req.body;
     const adminName = req.user.nama;
 
     if (!status || !["approved", "rejected"].includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Status harus 'approved' atau 'rejected'",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Status harus 'approved' atau 'rejected'" });
     }
-
     console.log(`✏️ Update izin ${id} to ${status} by ${adminName}`);
 
-    // Update izin di tabel attendances dengan kolom status_approval
-    const { data, error } = await supabase
-      .from("attendances")
-      .update({
-        status_approval: status,
-        approved_by: adminName,
-        approved_at: new Date().toISOString(),
-      })
-      .eq("id", id)
-      .eq("status", "izin")
-      .select();
-
-    if (error) {
-      console.error("Update izin error:", error.message);
+    const [res1] = await conn.query(
+      `UPDATE attendances
+       SET status_approval = ?, approved_by = ?, approved_at = NOW()
+       WHERE id = ? AND status = 'izin'`,
+      [status, adminName, id],
+    );
+    if (res1.affectedRows === 0) {
       return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
+        .status(404)
+        .json({ success: false, message: "Izin tidak ditemukan" });
     }
-
-    if (!data || data.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "Izin tidak ditemukan",
-      });
-    }
-
+    const [rows] = await conn.query(
+      "SELECT * FROM attendances WHERE id = ?",
+      [id],
+    );
     console.log(
       `✅ Izin ${id} berhasil ${status === "approved" ? "disetujui" : "ditolak"}`,
     );
-
     return res.json({
       success: true,
       message: `Izin berhasil ${status === "approved" ? "disetujui" : "ditolak"}`,
-      data: data[0],
+      data: rows[0],
     });
   } catch (error) {
     console.error("Update izin error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 

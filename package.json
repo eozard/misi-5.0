@@ -22,18 +22,19 @@
   "keywords": [
     "absensi",
     "pkl",
-    "supabase"
+    "mysql"
   ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@supabase/supabase-js": "^2.38.0",
     "express": "^4.18.2",
-    "bcrypt": "^5.1.1",
+    "bcryptjs": "^3.0.3",
     "jsonwebtoken": "^9.0.2",
     "dotenv": "^16.3.1",
     "cors": "^2.8.5",
-    "ip-range-check": "^0.2.0"
+    "ip-range-check": "^0.2.0",
+    "mysql2": "^3.11.0",
+    "multer": "^2.1.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.0",

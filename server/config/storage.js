@@ -1,67 +1,106 @@
 /*
  * ============================================================================
- * STORAGE HELPER - SUPABASE STORAGE
+ * STORAGE HELPER - LOCAL FILESYSTEM
  * ============================================================================
- * Wrapper untuk upload/download/hapus file di Supabase Storage.
+ * Wrapper untuk upload/hapus file PDF di disk lokal (pengganti Supabase Storage).
  *
- * CARA SETUP:
- * 1. Buka Supabase Dashboard → Storage
- * 2. Create bucket baru dengan nama 'pendaftaran-files' (atau sesuai setting)
- * 3. Set Public: ON (supaya PDF bisa langsung di-preview)
- * 4. Buat folder di dalam bucket: cv, transkrip, surat_persetujuan (opsional)
- *    ATAU biarkan kosong, kode akan otomatis bikin sub-folder
+ * STRUKTUR FOLDER:
+ *   <UPLOAD_ROOT>/pendaftaran/<pendaftar_id>/<tipe>_<timestamp>_<random>_<name>.pdf
  *
- * ENV VARIABLE (opsional):
- *   PENDAFTARAN_BUCKET  (default: 'pendaftaran-files')
+ * PENGGUNAAN:
+ *   - uploadFile(path, buffer, mimetype)
+ *   - deleteFile(path)
+ *   - getPublicUrl(path) -> return URL yang di-serve oleh Express
+ *
+ * UPLOAD_ROOT bisa di-override lewat env: UPLOAD_ROOT (default: ./uploads)
+ * File bisa diakses publik via /uploads/... (di-serve dari server.js)
  * ============================================================================
  */
 
-import { supabase } from "../config/supabase.js";
+import fs from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
 
-const BUCKET = process.env.PENDAFTARAN_BUCKET || "pendaftaran-files";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const UPLOAD_ROOT = path.resolve(
+  __dirname,
+  "..",
+  process.env.UPLOAD_ROOT || "uploads",
+);
+const PENDAFTARAN_DIR = path.join(UPLOAD_ROOT, "pendaftaran");
+
+export const BUCKET_NAME = "pendaftaran";
+
+const ensureDir = async (dir) => {
+  try {
+    await fs.mkdir(dir, { recursive: true });
+  } catch (err) {
+    if (err.code !== "EEXIST") throw err;
+  }
+};
+
+const stripUploadRoot = (absPath) => {
+  // Return relative path dari UPLOAD_ROOT, contoh: "pendaftaran/1/cv_x.pdf"
+  const rel = path.relative(UPLOAD_ROOT, absPath).split(path.sep).join("/");
+  return rel;
+};
 
 /**
- * Upload file ke Supabase Storage.
- * @param {string} path  Path di dalam bucket, contoh: "1/cv_1700000000_abc.pdf"
- * @param {Buffer} buffer Isi file
+ * Upload file ke disk lokal.
+ * @param {string} storagePath  Path relatif di dalam bucket, contoh "1/cv_xxx.pdf"
+ * @param {Buffer} buffer
  * @param {string} mimetype
- * @returns {Promise<{ok: boolean, error?: any}>}
  */
-export const uploadFile = async (path, buffer, mimetype = "application/pdf") => {
-  const { error } = await supabase.storage
-    .from(BUCKET)
-    .upload(path, buffer, {
-      contentType: mimetype,
-      upsert: true,
-    });
-
-  if (error) {
-    console.error("Supabase storage upload error:", error);
-    return { ok: false, error };
+export const uploadFile = async (storagePath, buffer, mimetype = "application/pdf") => {
+  try {
+    const absPath = path.join(UPLOAD_ROOT, storagePath);
+    await ensureDir(path.dirname(absPath));
+    await fs.writeFile(absPath, buffer);
+    return { ok: true, path: storagePath };
+  } catch (err) {
+    console.error("Local storage upload error:", err);
+    return { ok: false, error: err };
   }
-  return { ok: true };
 };
 
 /**
- * Hapus file dari Supabase Storage.
- * @param {string} path
+ * Hapus file dari disk lokal berdasarkan storage path.
  */
-export const deleteFile = async (path) => {
-  const { error } = await supabase.storage.from(BUCKET).remove([path]);
-  if (error) {
-    console.error("Supabase storage delete error:", error);
-    return { ok: false, error };
+export const deleteFile = async (storagePath) => {
+  try {
+    if (!storagePath) return { ok: true };
+    const absPath = path.join(UPLOAD_ROOT, storagePath);
+    await fs.unlink(absPath);
+    return { ok: true };
+  } catch (err) {
+    if (err.code === "ENOENT") {
+      // File tidak ada, anggap sukses
+      return { ok: true };
+    }
+    console.error("Local storage delete error:", err);
+    return { ok: false, error: err };
   }
-  return { ok: true };
 };
 
 /**
- * Ambil public URL untuk file di Supabase Storage.
- * Return URL absolut yang siap dipakai <iframe src=...> atau <a href=...>.
+ * Ambil URL publik untuk file. URL ini di-serve oleh Express (lihat server.js)
+ * dengan route /uploads/*.
  */
-export const getPublicUrl = (path) => {
-  const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
-  return data?.publicUrl || null;
+export const getPublicUrl = (storagePath) => {
+  if (!storagePath) return null;
+  // Normalize path separator untuk URL
+  const cleanPath = storagePath.split(path.sep).join("/");
+  return `/uploads/${cleanPath}`;
 };
 
-export const BUCKET_NAME = BUCKET;
+/**
+ * Kembalikan path absolut di disk (untuk streaming / proxy dari server).
+ */
+export const getAbsolutePath = (storagePath) => {
+  if (!storagePath) return null;
+  return path.join(UPLOAD_ROOT, storagePath);
+};
+
+export { UPLOAD_ROOT, PENDAFTARAN_DIR, ensureDir, stripUploadRoot };

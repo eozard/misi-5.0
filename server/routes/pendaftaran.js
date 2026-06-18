@@ -1,30 +1,17 @@
 /*
  * ============================================================================
- * ROUTES: PENDAFTARAN (PUBLIK + ADMIN)
+ * ROUTES: PENDAFTARAN (PUBLIK + ADMIN) - MySQL Version
  * ============================================================================
- * File PDF pendaftar disimpan di Supabase Storage (bukan disk lokal) supaya
- * file tetap tersedia setelah restart/deploy Railway.
- *
- * SETUP SEBELUM PAKAI:
- * 1. Buka Supabase → Storage → Create bucket "pendaftaran" (Public: ON)
- *    Atau via SQL:
- *      INSERT INTO storage.buckets (id, name, public)
- *      VALUES ('pendaftaran', 'pendaftaran', true)
- *      ON CONFLICT (id) DO NOTHING;
+ * File PDF pendaftar disimpan di disk lokal (folder server/uploads/pendaftaran/),
+ * bukan di Supabase Storage.
  *
  * ENDPOINT:
  * - POST   /api/pendaftaran                  Submit pendaftar + 3 file PDF
  * - GET    /api/pendaftaran                  List pendaftar (admin)
  * - PUT    /api/pendaftaran/:id              Update assigned_divisi (admin)
  * - DELETE /api/pendaftaran/:id              Hapus pendaftar + file (admin)
- * - GET    /api/pendaftaran/file/:id/:type   Proxy file PDF (untuk inline preview)
+ * - GET    /api/pendaftaran/file/:id/:type   Stream file PDF (untuk inline preview)
  * - GET    /api/pendaftaran/file-url/:id/:type Direct public URL
- *
- * FIELD FORM:
- * - nama, nim, divisi, email
- * - cv (file PDF)
- * - transkrip (file PDF)
- * - surat_persetujuan (file PDF)
  * ============================================================================
  */
 
@@ -32,12 +19,14 @@ import express from "express";
 import multer from "multer";
 import jwt from "jsonwebtoken";
 import fs from "fs";
-import { supabase } from "../config/supabase.js";
+import path from "path";
+import { pool } from "../config/db.js";
 import {
   uploadFile,
   deleteFile,
   getPublicUrl,
   BUCKET_NAME,
+  getAbsolutePath,
 } from "../config/storage.js";
 
 const router = express.Router();
@@ -79,7 +68,7 @@ const verifyAdminPendaftaran = (req, res, next) => {
   }
 };
 
-// Pakai memory storage supaya bisa dapat buffer untuk upload ke Supabase
+// Pakai memory storage supaya bisa dapat buffer untuk tulis ke disk
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -93,15 +82,13 @@ const upload = multer({
 });
 
 /**
- * Bangun object pendaftar dengan URL Supabase Storage.
+ * Bangun object pendaftar dengan URL untuk file.
  */
 const buildPendaftarResponse = (p, files = []) => {
   const findFile = (tipe) => files.find((f) => f.tipe === tipe);
-
   const cv = findFile("cv");
   const transkrip = findFile("transkrip");
   const surat = findFile("surat");
-
   return {
     id: p.id,
     nama: p.nama,
@@ -132,6 +119,7 @@ router.post(
     { name: "surat_persetujuan", maxCount: 1 },
   ]),
   async (req, res) => {
+    const conn = await pool.getConnection();
     try {
       const { nama, nim, divisi, email } = req.body;
       const files = req.files || {};
@@ -142,22 +130,18 @@ router.post(
           message: "Nama, NIM, divisi, dan email wajib diisi",
         });
       }
-
       if (!DIVISI_OPTIONS.includes(divisi)) {
         return res.status(400).json({
           success: false,
           message: `Divisi tidak valid. Pilihan: ${DIVISI_OPTIONS.join(", ")}`,
         });
       }
-
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email)) {
-        return res.status(400).json({
-          success: false,
-          message: "Format email tidak valid",
-        });
+        return res
+          .status(400)
+          .json({ success: false, message: "Format email tidak valid" });
       }
-
       if (!files.cv || !files.transkrip || !files.surat_persetujuan) {
         return res.status(400).json({
           success: false,
@@ -165,111 +149,98 @@ router.post(
         });
       }
 
-      // Cek duplikat
-      const { data: existing } = await supabase
-        .from("pendaftar")
-        .select("id, nim, email")
-        .or(`nim.eq.${nim},email.eq.${email}`)
-        .limit(1);
-
-      if (existing && existing.length > 0) {
+      // Cek duplikat NIM/email
+      const [dupRows] = await conn.query(
+        "SELECT id, nim, email FROM pendaftar WHERE nim = ? OR email = ? LIMIT 1",
+        [nim, email],
+      );
+      if (dupRows.length > 0) {
         return res.status(409).json({
           success: false,
           message: "NIM atau email sudah pernah digunakan untuk pendaftaran",
         });
       }
 
-      // Hitung urutan
-      const { count } = await supabase
-        .from("pendaftar")
-        .select("*", { count: "exact", head: true });
-      const urutan = (count || 0) + 1;
+      // Hitung urutan (auto increment sederhana: COUNT + 1)
+      const [countRows] = await conn.query(
+        "SELECT COUNT(*) AS total FROM pendaftar",
+      );
+      const urutan = (countRows[0]?.total || 0) + 1;
       const status = urutan <= 30 ? "priority" : "pending";
 
-      // Insert pendaftar dulu (untuk dapat ID)
-      const { data: pendaftar, error: insertError } = await supabase
-        .from("pendaftar")
-        .insert([
-          {
-            nama,
-            nim,
-            email,
-            divisi_pilihan: divisi,
-            urutan,
-            status,
-          },
-        ])
-        .select()
-        .single();
+      const [insertRes] = await conn.query(
+        `INSERT INTO pendaftar
+          (nama, nim, email, divisi_pilihan, urutan, status)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [nama, nim, email, divisi, urutan, status],
+      );
+      const pendaftarId = insertRes.insertId;
 
-      if (insertError) {
-        console.error("Insert pendaftar error:", insertError);
-        return res.status(500).json({
-          success: false,
-          message: "Gagal menyimpan data pendaftar: " + insertError.message,
-        });
-      }
-
-      // Upload 3 file ke Supabase Storage
-      const fileRows = [];
-      const uploadTasks = [
-        { tipe: "cv", field: "cv", original: files.cv[0].originalname, size: files.cv[0].size },
-        { tipe: "transkrip", field: "transkrip", original: files.transkrip[0].originalname, size: files.transkrip[0].size },
-        { tipe: "surat", field: "surat_persetujuan", original: files.surat_persetujuan[0].originalname, size: files.surat_persetujuan[0].size },
-      ];
-
+      // Upload 3 file ke disk
       const safeName = (s) => s.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const tasks = [
+        { tipe: "cv", field: "cv" },
+        { tipe: "transkrip", field: "transkrip" },
+        { tipe: "surat", field: "surat_persetujuan" },
+      ];
+      const fileRows = [];
 
-      for (const task of uploadTasks) {
+      for (const task of tasks) {
         const fileObj = files[task.field][0];
         const timestamp = Date.now();
         const random = Math.random().toString(36).substring(2, 8);
-        const storagePath = `${pendaftar.id}/${task.tipe}_${timestamp}_${random}_${safeName(task.original)}`;
+        const storagePath = `pendaftaran/${pendaftarId}/${task.tipe}_${timestamp}_${random}_${safeName(fileObj.originalname)}`;
 
-        const result = await uploadFile(
-          storagePath,
-          fileObj.buffer,
-          fileObj.mimetype,
-        );
+        const result = await uploadFile(storagePath, fileObj.buffer, fileObj.mimetype);
         if (!result.ok) {
           console.error(`Upload ${task.tipe} gagal:`, result.error);
-          // Lanjut terus, tapi catat error
         }
-
         fileRows.push({
-          pendaftar_id: pendaftar.id,
+          pendaftar_id: pendaftarId,
           tipe: task.tipe,
           filename: storagePath,
-          original_name: task.original,
-          file_size: task.size,
+          original_name: fileObj.originalname,
+          file_size: fileObj.size,
           mime_type: fileObj.mimetype,
           storage_path: storagePath,
         });
       }
 
-      // Insert metadata file
-      const { data: fileRowsData, error: filesError } = await supabase
-        .from("pendaftar_files")
-        .insert(fileRows)
-        .select();
+      await conn.query(
+        `INSERT INTO pendaftar_files
+          (pendaftar_id, tipe, filename, original_name, file_size, mime_type, storage_path)
+         VALUES ?`,
+        [
+          fileRows.map((r) => [
+            r.pendaftar_id,
+            r.tipe,
+            r.filename,
+            r.original_name,
+            r.file_size,
+            r.mime_type,
+            r.storage_path,
+          ]),
+        ],
+      );
 
-      if (filesError) {
-        console.error("Insert files metadata error:", filesError);
-        // Tidak rollback pendaftar supaya admin tidak bingung,
-        // tapi log agar bisa dimonitor
-      }
+      // Ambil data pendaftar final
+      const [finalRows] = await conn.query(
+        "SELECT * FROM pendaftar WHERE id = ?",
+        [pendaftarId],
+      );
 
       return res.status(201).json({
         success: true,
         message: "Pendaftaran berhasil dikirim",
-        data: buildPendaftarResponse(pendaftar, fileRowsData || fileRows),
+        data: buildPendaftarResponse(finalRows[0], fileRows),
       });
     } catch (err) {
       console.error("Pendaftaran error:", err);
-      return res.status(500).json({
-        success: false,
-        message: err.message || "Terjadi kesalahan server",
-      });
+      return res
+        .status(500)
+        .json({ success: false, message: err.message || "Terjadi kesalahan server" });
+    } finally {
+      conn.release();
     }
   },
 );
@@ -279,26 +250,22 @@ router.post(
  * Admin: list semua pendaftar
  */
 router.get("/pendaftaran", verifyAdminPendaftaran, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
-    const { data: pendaftarRows, error } = await supabase
-      .from("pendaftar")
-      .select("*")
-      .order("urutan", { ascending: true });
-
-    if (error) {
-      console.error("Fetch pendaftar error:", error);
-      return res.status(500).json({ success: false, message: error.message });
-    }
-
-    if (!pendaftarRows || pendaftarRows.length === 0) {
+    const [pendaftarRows] = await conn.query(
+      "SELECT * FROM pendaftar ORDER BY urutan ASC",
+    );
+    if (pendaftarRows.length === 0) {
       return res.json({ success: true, data: [], total: 0 });
     }
 
     const ids = pendaftarRows.map((p) => p.id);
-    const { data: files } = await supabase
-      .from("pendaftar_files")
-      .select("*")
-      .in("pendaftar_id", ids);
+    // Buat placeholder ?,?,?...
+    const placeholders = ids.map(() => "?").join(",");
+    const [files] = await conn.query(
+      `SELECT * FROM pendaftar_files WHERE pendaftar_id IN (${placeholders})`,
+      ids,
+    );
 
     const filesByPendaftar = (files || []).reduce((acc, f) => {
       if (!acc[f.pendaftar_id]) acc[f.pendaftar_id] = [];
@@ -314,6 +281,8 @@ router.get("/pendaftaran", verifyAdminPendaftaran, async (req, res) => {
   } catch (err) {
     console.error("Fetch pendaftar error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 
@@ -322,12 +291,14 @@ router.get("/pendaftaran", verifyAdminPendaftaran, async (req, res) => {
  * Admin: update assigned_divisi
  */
 router.put("/pendaftaran/:id", verifyAdminPendaftaran, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const pendaftarId = parseInt(req.params.id, 10);
     if (isNaN(pendaftarId)) {
-      return res.status(400).json({ success: false, message: "ID tidak valid" });
+      return res
+        .status(400)
+        .json({ success: false, message: "ID tidak valid" });
     }
-
     const { assigned_divisi, admin_nama } = req.body;
     if (!assigned_divisi) {
       return res
@@ -341,28 +312,24 @@ router.put("/pendaftaran/:id", verifyAdminPendaftaran, async (req, res) => {
       });
     }
 
-    const { data: existing, error: fetchError } = await supabase
-      .from("pendaftar")
-      .select("*")
-      .eq("id", pendaftarId)
-      .single();
-
-    if (fetchError || !existing) {
+    const [existingRows] = await conn.query(
+      "SELECT * FROM pendaftar WHERE id = ? LIMIT 1",
+      [pendaftarId],
+    );
+    if (existingRows.length === 0) {
       return res
         .status(404)
         .json({ success: false, message: "Pendaftar tidak ditemukan" });
     }
+    const existing = existingRows[0];
 
     const MAX_PER_DIVISI = 6;
-    const movingToSame = existing.divisi_assigned === assigned_divisi;
-    if (!movingToSame) {
-      const { count } = await supabase
-        .from("pendaftar")
-        .select("*", { count: "exact", head: true })
-        .eq("divisi_assigned", assigned_divisi)
-        .neq("id", pendaftarId);
-
-      if ((count || 0) >= MAX_PER_DIVISI) {
+    if (existing.divisi_assigned !== assigned_divisi) {
+      const [countRows] = await conn.query(
+        "SELECT COUNT(*) AS total FROM pendaftar WHERE divisi_assigned = ? AND id <> ?",
+        [assigned_divisi, pendaftarId],
+      );
+      if ((countRows[0]?.total || 0) >= MAX_PER_DIVISI) {
         return res.status(400).json({
           success: false,
           message: `Divisi ${assigned_divisi} sudah penuh (maksimal ${MAX_PER_DIVISI} peserta)`,
@@ -370,81 +337,68 @@ router.put("/pendaftaran/:id", verifyAdminPendaftaran, async (req, res) => {
       }
     }
 
-    const { data, error } = await supabase
-      .from("pendaftar")
-      .update({
-        divisi_assigned: assigned_divisi,
-        status: "assigned",
-        assigned_at: new Date().toISOString(),
-        assigned_by: admin_nama || req.admin.username,
-      })
-      .eq("id", pendaftarId)
-      .select()
-      .single();
+    const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+    await conn.query(
+      `UPDATE pendaftar
+       SET divisi_assigned = ?, status = 'assigned', assigned_at = ?, assigned_by = ?
+       WHERE id = ?`,
+      [assigned_divisi, now, admin_nama || req.admin.username, pendaftarId],
+    );
 
-    if (error) {
-      console.error("Update error:", error);
-      return res.status(500).json({ success: false, message: error.message });
-    }
-
-    return res.json({ success: true, data });
+    const [updatedRows] = await conn.query(
+      "SELECT * FROM pendaftar WHERE id = ?",
+      [pendaftarId],
+    );
+    return res.json({ success: true, data: updatedRows[0] });
   } catch (err) {
     console.error("Update error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 
 /*
  * ENDPOINT: DELETE /api/pendaftaran/:id
- * Admin: hapus pendaftar + file di Supabase Storage
+ * Admin: hapus pendaftar + file
  */
 router.delete("/pendaftaran/:id", verifyAdminPendaftaran, async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const pendaftarId = parseInt(req.params.id, 10);
     if (isNaN(pendaftarId)) {
-      return res.status(400).json({ success: false, message: "ID tidak valid" });
+      return res
+        .status(400)
+        .json({ success: false, message: "ID tidak valid" });
     }
 
-    // Ambil file
-    const { data: files } = await supabase
-      .from("pendaftar_files")
-      .select("*")
-      .eq("pendaftar_id", pendaftarId);
+    const [files] = await conn.query(
+      "SELECT storage_path FROM pendaftar_files WHERE pendaftar_id = ?",
+      [pendaftarId],
+    );
 
-    // Hapus file di Supabase Storage
-    if (files && files.length > 0) {
-      const paths = files.map((f) => f.storage_path).filter(Boolean);
-      if (paths.length > 0) {
-        const { error: storageErr } = await supabase.storage
-          .from(BUCKET_NAME)
-          .remove(paths);
-        if (storageErr) {
-          console.error("Storage delete error:", storageErr);
-        }
+    // Hapus file di disk (best effort)
+    for (const f of files) {
+      if (f.storage_path) {
+        await deleteFile(f.storage_path);
       }
     }
 
     // Hapus pendaftar (ON DELETE CASCADE hapus pendaftar_files)
-    const { error } = await supabase
-      .from("pendaftar")
-      .delete()
-      .eq("id", pendaftarId);
-
-    if (error) {
-      console.error("Delete error:", error);
-      return res.status(500).json({ success: false, message: error.message });
-    }
+    await conn.query("DELETE FROM pendaftar WHERE id = ?", [pendaftarId]);
 
     return res.json({ success: true, message: "Pendaftar berhasil dihapus" });
   } catch (err) {
     console.error("Delete error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 });
 
 /*
  * ENDPOINT: GET /api/pendaftaran/file/:id/:type
- * Proxy file PDF dari Supabase Storage (untuk inline preview).
+ * Stream file PDF (untuk inline preview)
  * type: 'cv' | 'transkrip' | 'surat_persetujuan'
  */
 router.get("/pendaftaran/file/:id/:type", async (req, res) => {
@@ -464,58 +418,52 @@ router.get("/pendaftaran/file/:id/:type", async (req, res) => {
         .json({ success: false, message: "Tipe file tidak valid" });
     }
 
-    const { data: file, error } = await supabase
-      .from("pendaftar_files")
-      .select("*")
-      .eq("pendaftar_id", pendaftarId)
-      .eq("tipe", dbTipe)
-      .single();
+    const conn = await pool.getConnection();
+    let file;
+    try {
+      const [rows] = await conn.query(
+        "SELECT * FROM pendaftar_files WHERE pendaftar_id = ? AND tipe = ? LIMIT 1",
+        [pendaftarId, dbTipe],
+      );
+      file = rows[0];
+    } finally {
+      conn.release();
+    }
 
-    if (error || !file) {
+    if (!file) {
       return res
         .status(404)
         .json({ success: false, message: "File metadata tidak ditemukan di database" });
     }
-
     if (!file.storage_path) {
       return res.status(404).json({
         success: false,
-        message: "File belum ada di storage (data lama, harus daftar ulang)",
+        message: "File belum ada di storage (data lama)",
       });
     }
 
-    // Download dari Supabase Storage, stream ke client
-    const { data: blob, error: dlErr } = await supabase.storage
-      .from(BUCKET_NAME)
-      .download(file.storage_path);
-
-    if (dlErr || !blob) {
-      console.error("Storage download error:", dlErr);
-      return res.status(404).json({
-        success: false,
-        message: "File tidak ada di storage: " + (dlErr?.message || "unknown"),
-      });
+    const absPath = getAbsolutePath(file.storage_path);
+    if (!fs.existsSync(absPath)) {
+      return res
+        .status(404)
+        .json({ success: false, message: "File tidak ada di disk" });
     }
 
-    const arrayBuffer = await blob.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Length", buffer.length);
-    res.setHeader(
-      "Content-Disposition",
-      `inline; filename="${file.original_name}"`,
-    );
+    res.setHeader("Content-Disposition", `inline; filename="${file.original_name}"`);
     res.setHeader("Cache-Control", "public, max-age=300");
-    res.send(buffer);
+    fs.createReadStream(absPath).pipe(res);
   } catch (err) {
     console.error("Serve file error:", err);
-    return res.status(500).json({ success: false, message: "Server error: " + err.message });
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error: " + err.message });
   }
 });
 
 /*
  * ENDPOINT: GET /api/pendaftaran/file-url/:id/:type
- * Return direct public URL (untuk debugging)
+ * Return direct public URL
  */
 router.get("/pendaftaran/file-url/:id/:type", async (req, res) => {
   try {
@@ -525,23 +473,30 @@ router.get("/pendaftaran/file-url/:id/:type", async (req, res) => {
     const tipeMap = { cv: "cv", transkrip: "transkrip", surat_persetujuan: "surat" };
     const dbTipe = tipeMap[type];
     if (!dbTipe) {
-      return res.status(400).json({ success: false, message: "Tipe file tidak valid" });
+      return res
+        .status(400)
+        .json({ success: false, message: "Tipe file tidak valid" });
     }
 
-    const { data: file } = await supabase
-      .from("pendaftar_files")
-      .select("*")
-      .eq("pendaftar_id", pendaftarId)
-      .eq("tipe", dbTipe)
-      .single();
+    const conn = await pool.getConnection();
+    let file;
+    try {
+      const [rows] = await conn.query(
+        "SELECT * FROM pendaftar_files WHERE pendaftar_id = ? AND tipe = ? LIMIT 1",
+        [pendaftarId, dbTipe],
+      );
+      file = rows[0];
+    } finally {
+      conn.release();
+    }
 
     if (!file) {
-      return res.status(404).json({ success: false, message: "File tidak ditemukan" });
+      return res
+        .status(404)
+        .json({ success: false, message: "File tidak ditemukan" });
     }
 
-    const { getPublicUrl } = await import("../config/storage.js");
     const publicUrl = file.storage_path ? getPublicUrl(file.storage_path) : null;
-
     return res.json({
       success: true,
       data: {

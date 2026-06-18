@@ -1,6 +1,6 @@
 /*
  * ============================================================================
- * ROUTES: AUTHENTICATION & ABSENSI
+ * ROUTES: AUTHENTICATION & ABSENSI (MySQL Version)
  * ============================================================================
  * File ini berisi semua endpoint untuk:
  * 1. LOGIN - Autentikasi user dengan device binding
@@ -8,77 +8,40 @@
  * 3. RIWAYAT - Lihat history absensi
  * 4. IZIN - Submit, lihat, dan batalkan permohonan izin
  *
- * KONSEP DEVICE BINDING:
- * Setiap user hanya bisa login dari device yang terdaftar (max 2-3 device).
- * Device diidentifikasi dengan fingerprint unik dari browser.
- * Tujuan: Mencegah sharing akun antar siswa.
+ * PENGGANTI SUPABASE → MySQL:
+ * - supabase.from('table').select('*') → pool.query('SELECT * FROM table ...')
+ * - supabase.from('table').insert({...}) → pool.query('INSERT INTO table SET ?', {...})
+ * - supabase.from('table').update({...}).eq(...) → pool.query('UPDATE table SET ? WHERE ...')
+ * - supabase.from('table').delete().eq(...) → pool.query('DELETE FROM table WHERE ...')
+ * - supabase.from('table').upsert(...) → INSERT ... ON DUPLICATE KEY UPDATE
  *
- * FLOW LOGIN:
- * 1. Client kirim {nama, password, deviceId}
- * 2. Server cek apakah user exists
- * 3. Server cek apakah device sudah terikat ke user lain (DEVICE BINDING CHECK)
- * 4. Server validasi password
- * 5. Server daftarkan device ke user (jika device baru)
- * 6. Server generate JWT token
- * 7. Client simpan token untuk request berikutnya
+ * Device binding tetap disimpan di tabel device_bindings (UNIQUE device_id).
+ * Kolom users.devices (JSON) menyimpan snapshot list device per user.
  * ============================================================================
  */
 
 import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { supabase } from "../config/supabase.js";
+import { pool, parseDevices } from "../config/db.js";
 
 const router = express.Router();
 
-// Function untuk mendapatkan JWT secret dari environment
-// Menggunakan lazy loading agar dotenv sudah sempat load .env
-const getJWTSecret = () => {
-  return (
-    process.env.JWT_SECRET ||
-    "your-super-secret-jwt-key-min-32-characters-long-here"
-  );
-};
+// JWT secret (lazy load supaya dotenv sudah sempat jalan)
+const getJWTSecret = () =>
+  process.env.JWT_SECRET ||
+  "your-super-secret-jwt-key-min-32-characters-long-here";
 
 /*
  * ============================================================================
  * ENDPOINT: POST /api/login
  * ============================================================================
- * Fungsi: Autentikasi user dan device binding
- *
- * REQUEST BODY:
- * - nama: string (username/nama lengkap)
- * - password: string (plain text, akan di-hash compare)
- * - deviceId: string (fingerprint dari browser)
- *
- * RESPONSE SUCCESS (200):
- * {
- *   success: true,
- *   token: "eyJhbGci...", // JWT token
- *   user: { id, nama, role, kelompok }
- * }
- *
- * CARA KERJA DEVICE BINDING:
- * 1. Cek di tabel device_bindings apakah deviceId sudah terikat ke user lain
- * 2. Jika ya → TOLAK login dengan error 403
- * 3. Jika tidak → Lanjut validasi password
- * 4. Setelah password benar:
- *    a. Simpan device ke kolom users.devices (JSONB array)
- *    b. Insert/update ke tabel device_bindings
- * 5. Generate JWT token dan return ke client
- *s
- * KEAMANAN:
- * - Admin tidak dibatasi device (bisa login dari device apapun)
- * - Mahasiswa max 2-3 device (sesuai users.max_devices)
- * - Password di-hash dengan bcrypt
- * - Token expired dalam 7 hari
- * ============================================================================
  */
 export const login = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { nama, password, deviceId } = req.body;
 
-    // Log untuk debugging dan monitoring
     console.log("\n" + "=".repeat(60));
     console.log("🔐 NEW LOGIN REQUEST");
     console.log("=".repeat(60));
@@ -87,8 +50,6 @@ export const login = async (req, res) => {
     console.log("⏰ Timestamp:", new Date().toISOString());
     console.log("=".repeat(60) + "\n");
 
-    // STEP 1: Validasi input
-    // Pastikan semua field required ada
     if (!nama || !password || !deviceId) {
       return res.status(400).json({
         success: false,
@@ -96,102 +57,64 @@ export const login = async (req, res) => {
       });
     }
 
-    // Deteksi IP client (hanya untuk log, bukan untuk validasi di endpoint ini)
     const clientIp = req.ip || req.connection.remoteAddress || "unknown";
+    console.log(`🔐 Login attempt: ${nama} dari device: ${deviceId}, IP: ${clientIp}`);
 
-    console.log(
-      `🔐 Login attempt: ${nama} dari device: ${deviceId}, IP: ${clientIp}`,
+    // STEP 1: Ambil data user
+    const [userRows] = await conn.query(
+      "SELECT id, nama, password, role, kelompok, devices, max_devices FROM users WHERE nama = ? LIMIT 1",
+      [nama],
     );
-
-    // STEP 2: Ambil data user dari database
-    // Query users dengan nama yang sesuai
-    const { data: users, error: fetchError } = await supabase
-      .from("users")
-      .select("*")
-      .eq("nama", nama);
-
-    if (fetchError) {
-      console.error("Database error:", fetchError.message);
+    if (userRows.length === 0) {
       return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
+        .status(401)
+        .json({ success: false, message: "Nama atau password salah" });
     }
+    const userRow = userRows[0];
+    const user = { ...userRow, devices: parseDevices(userRow.devices) };
 
-    // Jika user tidak ditemukan, return error (jangan spesifik apakah nama atau password salah)
-    if (!users || users.length === 0) {
-      return res.status(401).json({
-        success: false,
-        message: "Nama atau password salah",
-      });
-    }
-
-    const user = users[0];
-
-    // STEP 3: DEVICE BINDING CHECK (PENTING!)
-    // Cek apakah device ini sudah terikat ke user lain
-    // Skip untuk admin (admin bisa login dari device apapun)
+    // STEP 2: Device binding check (skip admin)
     if (user.role !== "admin") {
       console.log("🔍 Checking device binding...");
 
-      // Query tabel device_bindings untuk cek apakah deviceId sudah terdaftar
-      const { data: deviceBindings, error: deviceError } = await supabase
-        .from("device_bindings")
-        .select("*")
-        .eq("device_id", deviceId);
+      const [bindings] = await conn.query(
+        "SELECT user_name FROM device_bindings WHERE device_id = ? LIMIT 1",
+        [deviceId],
+      );
 
-      if (deviceError) {
-        console.error("Device binding error:", deviceError.message);
-        return res
-          .status(500)
-          .json({ success: false, message: "Database error" });
+      if (bindings.length > 0 && bindings[0].user_name !== nama) {
+        console.log(
+          `❌ Device ${deviceId} sudah terdaftar ke user ${bindings[0].user_name}`,
+        );
+        return res.status(403).json({
+          success: false,
+          message: `Device sudah terikat untuk user lain (${bindings[0].user_name})`,
+        });
       }
-
-      // Jika device sudah terdaftar, cek apakah terikat ke user yang berbeda
-      if (deviceBindings && deviceBindings.length > 0) {
-        const boundUser = deviceBindings[0];
-
-        // TOLAK jika device sudah terikat ke user lain
-        if (boundUser.user_name !== nama) {
-          console.log(
-            `❌ Device ${deviceId} sudah terdaftar ke user ${boundUser.user_name}`,
-          );
-          return res.status(403).json({
-            success: false,
-            message: `Device sudah terikat untuk user lain (${boundUser.user_name})`,
-          });
-        }
-
-        console.log(`✅ Device ${deviceId} milik user ${nama} (valid)`);
-      } else {
+      if (bindings.length === 0) {
         console.log(`🆕 Device ${deviceId} adalah device baru`);
+      } else {
+        console.log(`✅ Device ${deviceId} milik user ${nama} (valid)`);
       }
     }
 
-    // STEP 4: Validasi password
-    // Bandingkan password plaintext dengan hash di database
+    // STEP 3: Validasi password
     const passwordMatch = await bcrypt.compare(password, user.password);
     if (!passwordMatch) {
-      return res.status(401).json({
-        success: false,
-        message: "Nama atau password salah",
-      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Nama atau password salah" });
     }
-
     console.log("✅ Password valid");
 
-    // STEP 5: Device binding untuk non-admin
-    // Update kolom users.devices dan tabel device_bindings
+    // STEP 4: Device binding untuk non-admin
     if (user.role !== "admin") {
-      const existingDevices = user.devices || []; // Ambil list device yang sudah terdaftar
-
-      // Cek apakah device ini sudah ada di list
+      const existingDevices = user.devices || [];
       const deviceExists = existingDevices.some((d) => d.deviceId === deviceId);
 
       if (!deviceExists) {
-        // DEVICE BARU: Perlu daftarkan
         console.log(`🆕 Registering new device for user ${nama}`);
 
-        // Cek batas maksimal device
         if (existingDevices.length >= user.max_devices) {
           console.log(
             `❌ User ${nama} sudah mencapai maksimal devices (${user.max_devices})`,
@@ -202,168 +125,102 @@ export const login = async (req, res) => {
           });
         }
 
-        // Tambahkan device baru ke array
-        existingDevices.push({
+        const newDevice = {
           deviceId,
           firstSeen: new Date().toISOString(),
           lastUsed: new Date().toISOString(),
           usageCount: 1,
-        });
+        };
+        const updatedDevices = [...existingDevices, newDevice];
 
-        // Update kolom users.devices di database
-        const { error: updateError } = await supabase
-          .from("users")
-          .update({ devices: existingDevices })
-          .eq("id", user.id);
+        await conn.query("UPDATE users SET devices = ? WHERE id = ?", [
+          JSON.stringify(updatedDevices),
+          user.id,
+        ]);
 
-        if (updateError) {
-          console.error("Error updating devices:", updateError.message);
-          return res
-            .status(500)
-            .json({ success: false, message: "Database error" });
-        }
-
-        // Insert ke tabel device_bindings (untuk validasi cepat saat login)
-        console.log("🔍 About to insert device binding:", {
-          device_id: deviceId,
-          user_name: nama,
-          kelompok: user.kelompok,
-        });
-
-        const { data: bindData, error: bindError } = await supabase
-          .from("device_bindings")
-          .insert({
-            device_id: deviceId,
-            user_name: nama,
-            kelompok: user.kelompok,
-            bound_at: new Date().toISOString(),
-            last_used: new Date().toISOString(),
-            usage_count: 1,
-          })
-          .select();
-
-        if (bindError) {
-          console.error(
-            "❌ Error binding device - FULL DETAILS:",
-            JSON.stringify(
-              {
-                message: bindError.message,
-                code: bindError.code,
-                details: bindError.details,
-                hint: bindError.hint,
-              },
-              null,
-              2,
-            ),
+        try {
+          await conn.query(
+            `INSERT INTO device_bindings
+              (device_id, user_name, kelompok, bound_at, last_used, usage_count)
+             VALUES (?, ?, ?, NOW(), NOW(), 1)`,
+            [deviceId, nama, user.kelompok],
           );
-          // Hanya return error kalau bukan duplicate key (23505)
-          // Duplicate key artinya device sudah ada (race condition), diabaikan
-          if (bindError.code !== "23505") {
-            return res.status(500).json({
-              success: false,
-              message: "Database error: " + bindError.message,
-            });
-          }
+        } catch (err) {
+          // Duplicate key (device_id) → race condition, diabaikan
+          if (err.code !== "ER_DUP_ENTRY") throw err;
           console.log(`⚠️  Device sudah ada di device_bindings (diabaikan)`);
-        } else {
-          console.log(`✅ Device baru terbind untuk user ${nama}:`, bindData);
         }
       } else {
-        // DEVICE SUDAH ADA: Update usage count dan last used
         console.log(`🔄 Updating existing device for user ${nama}`);
-
         const deviceIndex = existingDevices.findIndex(
           (d) => d.deviceId === deviceId,
         );
         existingDevices[deviceIndex].lastUsed = new Date().toISOString();
         existingDevices[deviceIndex].usageCount =
           (existingDevices[deviceIndex].usageCount || 0) + 1;
+        const updatedDevices = existingDevices;
 
-        // Update kolom users.devices
-        const { error: updateError } = await supabase
-          .from("users")
-          .update({ devices: existingDevices })
-          .eq("id", user.id);
+        await conn.query("UPDATE users SET devices = ? WHERE id = ?", [
+          JSON.stringify(updatedDevices),
+          user.id,
+        ]);
 
-        if (updateError) {
-          console.error("Error updating device usage:", updateError.message);
-          return res
-            .status(500)
-            .json({ success: false, message: "Database error" });
-        }
-
-        // UPSERT tabel device_bindings
-        // (insert jika belum ada, update jika sudah ada)
-        console.log("🔄 Upserting device binding for existing device");
-        const { data: upsertData, error: bindUpsertError } = await supabase
-          .from("device_bindings")
-          .upsert(
-            {
-              device_id: deviceId,
-              user_name: nama,
-              kelompok: user.kelompok,
-              last_used: new Date().toISOString(),
-              usage_count: existingDevices[deviceIndex].usageCount,
-            },
-            {
-              onConflict: "device_id", // Conflict resolution: update jika device_id sama
-            },
-          )
-          .select();
-
-        if (bindUpsertError) {
-          console.error(
-            "❌ Error upserting device binding:",
-            bindUpsertError.message,
-          );
-        } else {
-          console.log(
-            `✅ Device binding upserted untuk user ${nama}:`,
-            upsertData,
-          );
-        }
+        // UPSERT device_bindings
+        await conn.query(
+          `INSERT INTO device_bindings
+            (device_id, user_name, kelompok, bound_at, last_used, usage_count)
+           VALUES (?, ?, ?, NOW(), NOW(), ?)
+           ON DUPLICATE KEY UPDATE
+             user_name = VALUES(user_name),
+             kelompok = VALUES(kelompok),
+             last_used = NOW(),
+             usage_count = VALUES(usage_count)`,
+          [
+            deviceId,
+            nama,
+            user.kelompok,
+            updatedDevices[deviceIndex].usageCount,
+          ],
+        );
 
         console.log(
-          `✅ Device update untuk user ${nama}: usage count = ${existingDevices[deviceIndex].usageCount}`,
+          `✅ Device update untuk user ${nama}: usage count = ${updatedDevices[deviceIndex].usageCount}`,
         );
       }
     }
 
-    // STEP 6: Generate JWT token
-    // ─────────────────────────────────────────────────────────────────────────
-    // JWT token adalah string yang di-encode berisi informasi user
-    // Token ini akan dikirim ke client dan disimpan (localStorage/sessionStorage)
-    // Setiap request ke protected endpoint, client harus kirim token ini di header
+    // STEP 5: Generate JWT token
     const token = jwt.sign(
       {
-        // Payload: data yang akan di-encode di dalam token
+        id: user.id,
         nama: user.nama,
         role: user.role,
         kelompok: user.kelompok,
         deviceId,
       },
-      getJWTSecret(), // Secret key untuk sign token (dari .env)
-      { expiresIn: "24h" }, // Token expired dalam 24 jam
+      getJWTSecret(),
+      { expiresIn: "24h" },
     );
 
     console.log(`✅ Login berhasil: ${nama} (${user.role})`);
 
-    // STEP 7: Return response sukses dengan token dan data user
     return res.json({
       success: true,
-      token, // JWT token untuk autentikasi
+      token,
       user: {
+        id: user.id,
         nama: user.nama,
         role: user.role,
         kelompok: user.kelompok,
-        devicesCount: (user.devices || []).length, // Jumlah device yang terdaftar
-        maxDevices: user.max_devices, // Maksimal device yang diizinkan
+        devicesCount: (user.devices || []).length,
+        maxDevices: user.max_devices,
       },
     });
   } catch (error) {
-    // Catch semua error yang tidak tertangani
     console.error("Login error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
@@ -371,54 +228,22 @@ export const login = async (req, res) => {
  * ============================================================================
  * ENDPOINT: POST /api/absen
  * ============================================================================
- * Fungsi: Submit absensi harian (pagi atau sore)
- * Middleware: verifyToken + isMahasiswa + wifiKampus
- *
- * REQUEST BODY:
- * - login_time: string ISO timestamp (waktu absen)
- * - deviceId: string (fingerprint device)
- *
- * RESPONSE SUCCESS (200):
- * {
- *   success: true,
- *   message: "Absen pagi berhasil tercatat",
- *   attendance: { ... }
- * }
- *
- * ATURAN ABSENSI:
- * 1. WAKTU PAGI: 08:00 - 10:00
- * 2. WAKTU SORE: 15:00 - 17:00
- * 3. Absen sore harus sudah absen pagi terlebih dahulu
- * 4. Jeda minimal antara absen pagi-sore: 6 jam (exclude waktu istirahat 12:00-13:00)
- * 5. Device harus terdaftar (ada di device_bindings)
- * 6. Hanya dari WiFi kampus (middleware wifiKampus)
- * 7. Tidak boleh absen 2 kali untuk sesi yang sama
- *
- * CARA KERJA:
- * 1. Validasi input (login_time, deviceId)
- * 2. Cek device terdaftar (query device_bindings)
- * 3. Konversi waktu ke timezone Jakarta (UTC+7)
- * 4. Tentukan sesi (pagi/sore) berdasarkan waktu
- * 5. Jika sore: cek sudah absen pagi + validasi jeda 6 jam
- * 6. Cek duplikat absen (tidak boleh absen 2x di sesi yang sama)
- * 7. Insert ke tabel attendances
- * ============================================================================
  */
 export const absen = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     console.log("\n" + "=".repeat(60));
     console.log("📝 ABSEN ROUTE HANDLER CALLED");
     console.log("=".repeat(60));
 
     const { login_time, deviceId } = req.body;
-    const { nama, role, kelompok } = req.user; // Dari JWT token (sudah di-decode oleh verifyToken)
+    const { nama, role, kelompok } = req.user;
 
     console.log(`👤 User: ${nama}`);
     console.log(`🔐 Role: ${role}`);
     console.log(`📱 Device ID: ${deviceId}`);
     console.log("=".repeat(60) + "\n");
 
-    // STEP 1: Validasi input
     if (!login_time || !deviceId) {
       return res.status(400).json({
         success: false,
@@ -428,23 +253,19 @@ export const absen = async (req, res) => {
 
     console.log(`📝 Absen attempt: ${nama} di ${login_time}`);
 
-    // STEP 2: Validasi device
-    // Pastikan device terdaftar di device_bindings
-    const { data: deviceBindings, error: deviceError } = await supabase
-      .from("device_bindings")
-      .select("*")
-      .eq("device_id", deviceId);
-
-    if (deviceError || !deviceBindings || deviceBindings.length === 0) {
+    // STEP 1: Validasi device
+    const [deviceRows] = await conn.query(
+      "SELECT user_name FROM device_bindings WHERE device_id = ? LIMIT 1",
+      [deviceId],
+    );
+    if (deviceRows.length === 0) {
       console.log(`❌ Device ${deviceId} tidak terdaftar`);
-      return res.status(403).json({
-        success: false,
-        message: "Device tidak terdaftar",
-      });
+      return res
+        .status(403)
+        .json({ success: false, message: "Device tidak terdaftar" });
     }
 
-    // STEP 3: Parse dan konversi waktu ke timezone Jakarta (UTC+7)
-    // Date yang dikirim client biasanya dalam UTC, perlu convert ke WIB
+    // STEP 2: Parse waktu (ISO) → WIB (UTC+7)
     const normalizeIso = (value) => {
       if (!value) return value;
       return /Z$|[+-]\d{2}:\d{2}$/.test(value) ? value : `${value}Z`;
@@ -458,54 +279,35 @@ export const absen = async (req, res) => {
       };
     };
     const loginDateTime = new Date(normalizeIso(login_time));
-    const {
-      hour,
-      minute,
-      date: today,
-    } = getJakartaDateTimeParts(loginDateTime);
-    const timeInMinutes = hour * 60 + minute; // Convert ke total menit untuk mudah compare
+    const { hour, minute, date: today } = getJakartaDateTimeParts(loginDateTime);
+    const timeInMinutes = hour * 60 + minute;
 
-    // STEP 4: Tentukan sesi berdasarkan waktu atau status absen pagi
-    // Pagi: 08:00 - 10:00 (480 menit - 600 menit)
-    // Sore: 15:00 - 17:00 (900 menit - 1020 menit)
+    // STEP 3: Tentukan sesi
     let sesi;
-    const pagiStart = 8 * 60; // 08:00 = 480 menit
-    const pagiEnd = 10 * 60; // 10:00 = 600 menit
-    const soreStart = 15 * 60; // 15:00 = 900 menit
-    const soreEnd = 17 * 60; // 17:00 = 1020 menit
-    // today harus berdasarkan timezone Jakarta agar validasi harian akurat.
+    const pagiStart = 8 * 60;
+    const pagiEnd = 10 * 60;
+    const soreStart = 15 * 60;
+    const soreEnd = 17 * 60;
 
-    // Check apakah time validation di-bypass (development mode)
-    // Jika BYPASS_PAGI_ONLY=true, selalu set sesi ke pagi
-    // Jika BYPASS_TIME_CHECK=true, tentukan sesi berdasarkan apakah sudah absen pagi
     if (process.env.BYPASS_PAGI_ONLY === "true") {
       console.log("⏰ Time check bypassed (pagi only)");
       sesi = "pagi";
     } else if (process.env.BYPASS_TIME_CHECK === "true") {
       console.log("⏰ Time check bypassed (full)");
-
-      // Cek apakah sudah absen pagi hari ini
-      const { data: pagiAttendance } = await supabase
-        .from("attendances")
-        .select("*")
-        .eq("nama", nama)
-        .eq("tanggal", today)
-        .eq("sesi", "pagi");
-
-      // Jika sudah ada absen pagi hari ini → set sesi sore
-      // Jika belum ada → set sesi pagi
-      sesi = pagiAttendance && pagiAttendance.length > 0 ? "sore" : "pagi";
+      const [pagiRows] = await conn.query(
+        "SELECT id FROM attendances WHERE nama = ? AND tanggal = ? AND sesi = 'pagi' LIMIT 1",
+        [nama, today],
+      );
+      sesi = pagiRows.length > 0 ? "sore" : "pagi";
       console.log(
-        `📝 Bypass mode: Sesi otomatis set ke "${sesi}" (sudah absen pagi: ${pagiAttendance && pagiAttendance.length > 0})`,
+        `📝 Bypass mode: Sesi otomatis set ke "${sesi}" (sudah absen pagi: ${pagiRows.length > 0})`,
       );
     } else {
-      // Mode production: validasi jam normal
       if (timeInMinutes >= pagiStart && timeInMinutes <= pagiEnd) {
         sesi = "pagi";
       } else if (timeInMinutes >= soreStart && timeInMinutes <= soreEnd) {
         sesi = "sore";
       } else {
-        // Waktu di luar jam absen
         return res.status(403).json({
           success: false,
           message:
@@ -514,28 +316,15 @@ export const absen = async (req, res) => {
       }
     }
 
-    // STEP 5: Validasi khusus untuk absen sore
-    // Harus sudah absen pagi + jeda minimal 6 jam (exclude istirahat)
+    // STEP 4: Validasi khusus absen sore
     if (sesi === "sore") {
-      // Cek apakah sudah absen pagi hari ini
-      const { data: pagiAttendance, error: pagiError } = await supabase
-        .from("attendances")
-        .select("*")
-        .eq("nama", nama)
-        .eq("tanggal", today)
-        .eq("sesi", "pagi")
-        .order("login_time", { ascending: false })
-        .limit(1);
-
-      if (pagiError) {
-        console.error("Pagi attendance check error:", pagiError.message);
-        return res
-          .status(500)
-          .json({ success: false, message: "Database error" });
-      }
-
-      // Tolak jika belum absen pagi
-      if (!pagiAttendance || pagiAttendance.length === 0) {
+      const [pagiRows] = await conn.query(
+        `SELECT login_time FROM attendances
+         WHERE nama = ? AND tanggal = ? AND sesi = 'pagi'
+         ORDER BY login_time DESC LIMIT 1`,
+        [nama, today],
+      );
+      if (pagiRows.length === 0) {
         return res.status(403).json({
           success: false,
           message: "Harus sudah absen pagi sebelum absen sore",
@@ -543,27 +332,15 @@ export const absen = async (req, res) => {
       }
 
       const bypassJedaCheck = process.env.BYPASS_JEDA_CHECK === "true";
-
       if (!bypassJedaCheck) {
-        // Hitung jeda waktu antara absen pagi dan sore
-        // Exclude waktu istirahat (12:00-13:00) dari hitungan
-        const pagiLoginTime = new Date(
-          normalizeIso(pagiAttendance[0].login_time),
-        );
-        const diffMinutesRaw = (loginDateTime - pagiLoginTime) / (1000 * 60); // Selisih dalam menit
-
+        const pagiLoginTime = new Date(normalizeIso(pagiRows[0].login_time));
+        const diffMinutesRaw = (loginDateTime - pagiLoginTime) / (1000 * 60);
         if (!Number.isFinite(diffMinutesRaw)) {
-          console.warn("⚠️ Invalid time diff for 6-hour check", {
-            login_time,
-            pagi_login_time: pagiAttendance[0].login_time,
-          });
-          return res.status(400).json({
-            success: false,
-            message: "Data waktu absen tidak valid",
-          });
+          return res
+            .status(400)
+            .json({ success: false, message: "Data waktu absen tidak valid" });
         }
 
-        // Convert ke Jakarta time untuk hitung overlap waktu istirahat
         const pagiJakarta = new Date(
           pagiLoginTime.getTime() + 7 * 60 * 60 * 1000,
         );
@@ -571,35 +348,27 @@ export const absen = async (req, res) => {
           loginDateTime.getTime() + 7 * 60 * 60 * 1000,
         );
 
-        // Hitung berapa menit overlap dengan waktu istirahat (12:00-13:00)
         let overlapMinutes = 0;
         if (pagiJakarta.toDateString() === soreJakarta.toDateString()) {
           const startMinutes =
             pagiJakarta.getUTCHours() * 60 + pagiJakarta.getUTCMinutes();
           const endMinutes =
             soreJakarta.getUTCHours() * 60 + soreJakarta.getUTCMinutes();
-          const breakStart = 12 * 60; // 12:00
-          const breakEnd = 13 * 60; // 13:00
-
-          // Hitung overlap (jika ada)
+          const breakStart = 12 * 60;
+          const breakEnd = 13 * 60;
           overlapMinutes = Math.max(
             0,
             Math.min(endMinutes, breakEnd) - Math.max(startMinutes, breakStart),
           );
         }
-
-        // Selisih efektif = selisih total - waktu istirahat
         const effectiveDiffMinutes = diffMinutesRaw - overlapMinutes;
         const diffHours = effectiveDiffMinutes / 60;
 
         console.log("⏱️ Jeda check", {
           bypassJedaCheck,
-          login_time,
-          pagi_login_time: pagiAttendance[0].login_time,
           diffHours,
         });
 
-        // Tolak jika jeda kurang dari 6 jam
         if (diffHours < 6) {
           return res.status(403).json({
             success: false,
@@ -611,199 +380,163 @@ export const absen = async (req, res) => {
       }
     }
 
-    // STEP 6: Cek duplikat absen (tidak boleh absen 2x untuk sesi yang sama)
-    const { data: existingAttendance, error: existingError } = await supabase
-      .from("attendances")
-      .select("*")
-      .eq("nama", nama)
-      .eq("tanggal", today)
-      .eq("sesi", sesi);
-
-    if (existingError) {
-      console.error("Duplicate check error:", existingError.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    // Tolak jika sudah absen di sesi yang sama
-    if (existingAttendance && existingAttendance.length > 0) {
+    // STEP 5: Cek duplikat
+    const [existingRows] = await conn.query(
+      "SELECT id FROM attendances WHERE nama = ? AND tanggal = ? AND sesi = ?",
+      [nama, today, sesi],
+    );
+    if (existingRows.length > 0) {
       console.log(`❌ Duplikat absen ${sesi} untuk ${nama}`);
-      return res.status(403).json({
-        success: false,
-        message: `Anda sudah absen ${sesi} hari ini`,
-      });
+      return res
+        .status(403)
+        .json({ success: false, message: `Anda sudah absen ${sesi} hari ini` });
     }
 
-    // STEP 7: Insert absensi ke database
-    const jamMasuk = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00`; // Format: HH:MM:SS
-
-    const { data: newAttendance, error: insertError } = await supabase
-      .from("attendances")
-      .insert({
+    // STEP 6: Insert absensi
+    const jamMasuk = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00`;
+    const [insertRes] = await conn.query(
+      `INSERT INTO attendances
+        (nama, kelompok, tanggal, sesi, jam_masuk, login_time, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'hadir')`,
+      [
         nama,
         kelompok,
-        tanggal: today, // YYYY-MM-DD
-        sesi, // "pagi" atau "sore"
-        jam_masuk: jamMasuk, // HH:MM:SS
-        login_time: loginDateTime.toISOString(), // ISO timestamp lengkap
-        status: "hadir",
-      })
-      .select();
-
-    if (insertError) {
-      console.error("Insert attendance error:", insertError.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
+        today,
+        sesi,
+        jamMasuk,
+        loginDateTime.toISOString().slice(0, 19).replace("T", " "),
+      ],
+    );
+    const insertedId = insertRes.insertId;
+    const [insertedRows] = await conn.query(
+      "SELECT * FROM attendances WHERE id = ?",
+      [insertedId],
+    );
+    const newAttendance = insertedRows[0];
 
     console.log(`✅ Absen berhasil: ${nama} - ${sesi} - ${jamMasuk}`);
 
-    // Return response sukses
     return res.json({
       success: true,
       message: `Absen ${sesi} berhasil tercatat`,
-      attendance: newAttendance[0],
+      attendance: newAttendance,
     });
   } catch (error) {
     console.error("Absen error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// GET /api/izin - Get izin mahasiswa
-// GET /api/izin - Lihat daftar izin yang sudah diajukan
-// Query dari tabel attendances dengan status='izin'
+/*
+ * ============================================================================
+ * GET /api/izin - Lihat daftar izin yang sudah diajukan
+ * ============================================================================
+ */
 export const getIzin = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { nama } = req.user;
-
     console.log(`📋 Get izin untuk: ${nama}`);
 
-    // Query izin dari tabel attendances (status='izin')
-    const { data: izinList, error } = await supabase
-      .from("attendances")
-      .select(
-        "id, nama, kelompok, tanggal, sesi, keterangan, status_approval, approved_by, approved_at, created_at",
-      )
-      .eq("nama", nama)
-      .eq("status", "izin")
-      .order("tanggal", { ascending: false });
-
-    if (error) {
-      console.error("Get izin error:", error.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    return res.json({
-      success: true,
-      data: izinList || [],
-    });
+    const [rows] = await conn.query(
+      `SELECT id, nama, kelompok, tanggal, sesi, keterangan,
+              status_approval, approved_by, approved_at, created_at
+       FROM attendances
+       WHERE nama = ? AND status = 'izin'
+       ORDER BY tanggal DESC`,
+      [nama],
+    );
+    return res.json({ success: true, data: rows });
   } catch (error) {
     console.error("Get izin error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// DELETE /api/izin/:id - Batalkan izin (hanya pending)
-// Tandai izin sebagai dibatalkan agar kuota harian tetap dihitung
+/*
+ * ============================================================================
+ * DELETE /api/izin/:id - Batalkan izin (hanya pending)
+ * ============================================================================
+ */
 export const cancelIzin = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { nama } = req.user;
     const { id } = req.params;
 
-    // Check if izin exists and belongs to user
-    const { data: izinData, error: fetchError } = await supabase
-      .from("attendances")
-      .select("*")
-      .eq("id", id)
-      .eq("nama", nama)
-      .eq("status", "izin")
-      .single();
-
-    if (fetchError || !izinData) {
-      return res.status(404).json({
-        success: false,
-        message: "Izin tidak ditemukan",
-      });
-    }
-
-    // Hanya bisa batalkan izin dengan status_approval null atau pending
-    if (izinData.status_approval && izinData.status_approval !== "pending") {
-      return res.status(403).json({
-        success: false,
-        message: "Hanya izin pending yang bisa dibatalkan",
-      });
-    }
-
-    // Update status izin jadi cancelled (tetap dihitung untuk limit harian)
-    const { error: updateError } = await supabase
-      .from("attendances")
-      .update({
-        status_approval: "cancelled",
-        approved_by: nama,
-        approved_at: new Date().toISOString(),
-      })
-      .eq("id", id);
-
-    if (updateError) {
-      console.error("Update izin cancel error:", updateError.message);
+    const [rows] = await conn.query(
+      `SELECT id, status_approval FROM attendances
+       WHERE id = ? AND nama = ? AND status = 'izin' LIMIT 1`,
+      [id, nama],
+    );
+    if (rows.length === 0) {
       return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
+        .status(404)
+        .json({ success: false, message: "Izin tidak ditemukan" });
+    }
+    if (rows[0].status_approval && rows[0].status_approval !== "pending") {
+      return res
+        .status(403)
+        .json({ success: false, message: "Hanya izin pending yang bisa dibatalkan" });
     }
 
+    await conn.query(
+      `UPDATE attendances
+       SET status_approval = 'cancelled', approved_by = ?, approved_at = NOW()
+       WHERE id = ?`,
+      [nama, id],
+    );
     console.log(`✅ Izin ${id} dibatalkan oleh ${nama}`);
-
-    return res.json({
-      success: true,
-      message: "Izin berhasil dibatalkan",
-    });
+    return res.json({ success: true, message: "Izin berhasil dibatalkan" });
   } catch (error) {
     console.error("Cancel izin error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// POST /api/izin - Submit permohonan izin
-// Insert izin ke tabel attendances dengan status='izin'
+/*
+ * ============================================================================
+ * POST /api/izin - Submit permohonan izin
+ * ============================================================================
+ */
 export const submitIzin = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { nama, kelompok } = req.user;
     const { keterangan, sesi, bukti_url } = req.body;
 
-    // Validasi input
     if (!keterangan) {
-      return res.status(400).json({
-        success: false,
-        message: "Keterangan izin diperlukan",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Keterangan izin diperlukan" });
     }
 
-    const today = new Date().toISOString().split("T")[0];
+    // today (WIB YYYY-MM-DD)
+    const nowMs = Date.now();
+    const wib = new Date(nowMs + 7 * 60 * 60 * 1000);
+    const today = wib.toISOString().slice(0, 10);
 
-    // Batasi izin maksimal 2x per hari (sesi: izin-1, izin-2)
-    const { data: existingIzin } = await supabase
-      .from("attendances")
-      .select("sesi")
-      .eq("nama", nama)
-      .eq("tanggal", today)
-      .eq("status", "izin");
-
-    const existingSessions = existingIzin?.map((a) => a.sesi) || [];
+    // Batasi izin max 2x per hari
+    const [existing] = await conn.query(
+      "SELECT sesi FROM attendances WHERE nama = ? AND tanggal = ? AND status = 'izin'",
+      [nama, today],
+    );
+    const existingSessions = existing.map((a) => a.sesi);
     const allowedSessions = ["izin-1", "izin-2"];
-    let sesiIzin = sesi;
 
     if (existingSessions.length >= allowedSessions.length) {
-      return res.status(400).json({
-        success: false,
-        message: "Maksimal izin 2x per hari",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Maksimal izin 2x per hari" });
     }
 
+    let sesiIzin = sesi;
     if (!sesiIzin || !allowedSessions.includes(sesiIzin)) {
       sesiIzin = allowedSessions.find(
         (session) => !existingSessions.includes(session),
@@ -814,78 +547,70 @@ export const submitIzin = async (req, res) => {
       `📝 Submit izin: ${nama} untuk ${today} (sesi: ${sesiIzin}, alasan: ${keterangan})`,
     );
 
-    // Insert izin ke tabel attendances
-    // Catat jam izin saat tombol ditekan (waktu server dalam WIB/Jakarta)
-    const izinTime = new Date();
-    const izinJakarta = new Date(izinTime.getTime() + 7 * 60 * 60 * 1000);
-    const izinHour = izinJakarta.getUTCHours();
-    const izinMinute = izinJakarta.getUTCMinutes();
+    const izinHour = wib.getUTCHours();
+    const izinMinute = wib.getUTCMinutes();
     const jamMasukIzin = `${String(izinHour).padStart(2, "0")}:${String(izinMinute).padStart(2, "0")}:00`;
-    const { data, error } = await supabase
-      .from("attendances")
-      .insert({
+    const loginTimeSql = new Date(nowMs).toISOString().slice(0, 19).replace("T", " ");
+
+    const [insertRes] = await conn.query(
+      `INSERT INTO attendances
+        (nama, kelompok, tanggal, sesi, status, jam_masuk, login_time,
+         keterangan, bukti_url, status_approval, created_at)
+       VALUES (?, ?, ?, ?, 'izin', ?, ?, ?, ?, 'pending', ?)`,
+      [
         nama,
         kelompok,
-        tanggal: today,
-        sesi: sesiIzin,
-        status: "izin", // Status izin
-        jam_masuk: jamMasukIzin,
-        login_time: izinTime.toISOString(),
+        today,
+        sesiIzin,
+        jamMasukIzin,
+        loginTimeSql,
         keterangan,
-        bukti_url: bukti_url || null,
-        status_approval: "pending", // Default pending menunggu admin approve
-        created_at: izinTime.toISOString(),
-      })
-      .select();
+        bukti_url || null,
+        loginTimeSql,
+      ],
+    );
 
-    if (error) {
-      console.error("Submit izin error:", error.message);
-      return res.status(500).json({
-        success: false,
-        message: `Database error: ${error.message}`,
-      });
-    }
-
+    const [rows] = await conn.query(
+      "SELECT * FROM attendances WHERE id = ?",
+      [insertRes.insertId],
+    );
     console.log(`✅ Izin berhasil disubmit untuk ${nama}`);
-
     return res.json({
       success: true,
       message: "Izin berhasil diajukan. Menunggu persetujuan admin.",
-      data: data[0],
+      data: rows[0],
     });
   } catch (error) {
     console.error("Submit izin error:", error);
-    return res.status(500).json({ success: false, message: "Server error" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
-// GET /api/riwayat
+/*
+ * ============================================================================
+ * GET /api/riwayat
+ * ============================================================================
+ */
 export const getRiwayat = async (req, res) => {
+  const conn = await pool.getConnection();
   try {
     const { nama } = req.user;
-
     console.log(`📖 Get riwayat untuk: ${nama}`);
 
-    const { data: attendances, error } = await supabase
-      .from("attendances")
-      .select("*")
-      .eq("nama", nama)
-      .order("tanggal", { ascending: false });
-
-    if (error) {
-      console.error("Get riwayat error:", error.message);
-      return res
-        .status(500)
-        .json({ success: false, message: "Database error" });
-    }
-
-    return res.json({
-      success: true,
-      data: attendances || [],
-    });
+    const [rows] = await conn.query(
+      "SELECT * FROM attendances WHERE nama = ? ORDER BY tanggal DESC, id DESC",
+      [nama],
+    );
+    return res.json({ success: true, data: rows });
   } catch (error) {
     console.error("Get riwayat error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
   }
 };
 
