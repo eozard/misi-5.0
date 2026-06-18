@@ -1331,15 +1331,25 @@ const DetailModal = ({ item, onClose }) => {
                     <span className="text-sm font-medium text-gray-700">
                       {activeFile.label}
                     </span>
-                    <a
-                      href={activeFile.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      Download / Buka di tab baru
-                    </a>
+                    <div className="flex items-center gap-3">
+                      <a
+                        href={activeFile.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
+                      >
+                        <FileText className="w-3.5 h-3.5" />
+                        Buka di tab baru
+                      </a>
+                      <a
+                        href={activeFile.url}
+                        download
+                        className="text-xs text-indigo-600 hover:text-indigo-700 flex items-center gap-1"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        Download
+                      </a>
+                    </div>
                   </div>
                   {iframeError ? (
                     <div className="p-6 text-center bg-white">
@@ -1348,7 +1358,7 @@ const DetailModal = ({ item, onClose }) => {
                         Gagal memuat preview PDF
                       </p>
                       <p className="text-xs text-gray-500 mt-1 mb-3">
-                        Browser mungkin memblokir embed. Klik tombol download
+                        Browser mungkin memblokir embed. Klik tombol di atas
                         untuk membuka di tab baru.
                       </p>
                       <a
@@ -1357,19 +1367,26 @@ const DetailModal = ({ item, onClose }) => {
                         rel="noopener noreferrer"
                         className="btn-primary inline-flex items-center gap-2 text-sm"
                       >
-                        <Download className="w-4 h-4" />
+                        <FileText className="w-4 h-4" />
                         Buka PDF
                       </a>
                     </div>
                   ) : (
-                    <iframe
-                      src={activeFile.url}
-                      title={activeFile.label}
+                    <object
+                      data={activeFile.url}
+                      type="application/pdf"
                       className="w-full"
-                      style={{ height: "60vh", border: "none" }}
+                      style={{ height: "65vh" }}
                       onLoad={handleIframeLoad}
-                      onError={() => setIframeError(true)}
-                    />
+                    >
+                      <iframe
+                        src={activeFile.url}
+                        title={activeFile.label}
+                        className="w-full"
+                        style={{ height: "65vh", border: "none" }}
+                        onError={() => setIframeError(true)}
+                      />
+                    </object>
                   )}
                 </div>
               )}

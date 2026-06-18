@@ -97,8 +97,13 @@ app.use(
   "/uploads",
   express.static(UPLOAD_ROOT, {
     maxAge: "1h",
-    setHeaders: (res) => {
+    setHeaders: (res, filePath) => {
       res.setHeader("Cache-Control", "public, max-age=3600");
+      // Paksa PDF dibuka di browser (inline), bukan di-download
+      if (filePath.toLowerCase().endsWith(".pdf")) {
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader("Content-Disposition", "inline");
+      }
     },
   }),
 );

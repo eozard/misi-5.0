@@ -1,10 +1,11 @@
 /*
  * Landing page PKL BPTI.
- * Halaman awal aplikasi: pengguna memilih untuk mendaftar atau login absensi.
+ * Halaman awal aplikasi: pengguna memilih untuk mendaftar, absen, atau masuk
+ * sebagai admin pendaftaran.
  */
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { UserPlus, LogIn, Building2 } from "lucide-react";
+import { UserPlus, LogIn, Building2, UserCog } from "lucide-react";
 
 const LandingPage = () => {
   const navigate = useNavigate();
@@ -30,7 +31,7 @@ const LandingPage = () => {
             Silakan pilih menu di bawah ini
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <button
               type="button"
               onClick={() => navigate("/pendaftaran")}
@@ -56,6 +57,22 @@ const LandingPage = () => {
               <span className="text-lg font-semibold text-gray-900">Absen</span>
               <span className="text-sm text-gray-600 mt-1 text-center">
                 Login untuk absensi harian
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => navigate("/admin_pendaftaran")}
+              className="flex flex-col items-center justify-center p-6 border-2 border-purple-200 rounded-xl bg-purple-50 hover:bg-purple-100 hover:border-purple-400 transition group"
+            >
+              <div className="w-14 h-14 bg-purple-600 rounded-full flex items-center justify-center mb-3 group-hover:scale-110 transition">
+                <UserCog className="w-7 h-7 text-white" />
+              </div>
+              <span className="text-lg font-semibold text-gray-900">
+                Admin Pendaftaran
+              </span>
+              <span className="text-sm text-gray-600 mt-1 text-center">
+                Kelola pendaftar & divisi
               </span>
             </button>
           </div>
