@@ -1,9 +1,10 @@
-import { ExternalLink, FileText, Mail, User2, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Download, FileText, Mail, User2, X } from "lucide-react";
 
 const pickAttachments = (item) => {
   const candidates = [
     { key: "cv_url", label: "CV" },
-    { key: "transkrip_url", label: "Transkrip" },
+    { key: "transkrip_url", label: "Transkrip nilai" },
     { key: "surat_persetujuan_url", label: "Surat persetujuan" },
     { key: "krs_url", label: "KRS" },
     { key: "portfolio_url", label: "Portofolio" },
@@ -18,11 +19,35 @@ const pickAttachments = (item) => {
     .filter((x) => !!x.url);
 };
 
+const isLikelyPdf = (url) => {
+  const u = String(url || "").toLowerCase();
+  return u.includes(".pdf") || u.includes("application/pdf") || u.includes("pdf");
+};
+
 const PendaftarDetailModal = ({ open, item, onClose }) => {
   if (!open) return null;
 
-  const attachments = pickAttachments(item);
+  const attachments = useMemo(() => pickAttachments(item), [item]);
+  const [activeKey, setActiveKey] = useState(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setActiveKey(attachments[0]?.key || null);
+  }, [open, item?.id, attachments]);
+
+  const activeAttachment = useMemo(
+    () => attachments.find((a) => a.key === activeKey) || attachments[0] || null,
+    [attachments, activeKey]
+  );
+
   const assigned = item?.assigned_divisi || "-";
+  const preferred =
+    item?.divisi ||
+    item?.divisi_pilihan ||
+    item?.pilihan_divisi ||
+    item?.pilihan ||
+    "-";
+  const assignedBy = item?.admin_nama || item?.assigned_by || item?.updated_by || null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -33,16 +58,14 @@ const PendaftarDetailModal = ({ open, item, onClose }) => {
         className="absolute inset-0 bg-slate-950/60 backdrop-blur-sm"
       />
 
-      <div className="relative w-full max-w-2xl overflow-hidden rounded-3xl border border-white/20 bg-white/95 shadow-2xl">
+      <div className="relative w-full max-w-6xl overflow-hidden rounded-3xl border border-white/20 bg-white/95 shadow-2xl">
         <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4">
           <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-gray-500">
-              Detail pendaftar
-            </p>
-            <h3 className="mt-1 truncate text-lg font-extrabold tracking-tight text-gray-900">
-              {item?.nama || "Pendaftar"}
-            </h3>
-            <p className="mt-1 truncate text-sm text-gray-500">
+            <div className="flex items-center gap-2">
+              <User2 className="h-4 w-4 text-indigo-600" />
+              <p className="text-sm font-bold text-gray-900">Detail pendaftar</p>
+            </div>
+            <p className="mt-1 truncate text-xs text-gray-500">
               {item?.nim || "-"} · {item?.email || "-"}
             </p>
           </div>
@@ -55,61 +78,70 @@ const PendaftarDetailModal = ({ open, item, onClose }) => {
           </button>
         </div>
 
-        <div className="grid gap-3 px-5 py-4 md:grid-cols-2">
-          <div className="rounded-2xl border border-gray-200 bg-white p-4">
-            <div className="flex items-center gap-2">
-              <User2 className="h-4 w-4 text-indigo-600" />
-              <p className="text-sm font-bold text-gray-900">Identitas</p>
-            </div>
-            <div className="mt-3 space-y-2 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-gray-500">Nama</span>
-                <span className="max-w-[65%] truncate font-semibold text-gray-900">
-                  {item?.nama || "-"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-gray-500">NIM</span>
-                <span className="max-w-[65%] truncate font-mono font-semibold text-gray-900">
-                  {item?.nim || "-"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-gray-500">Divisi</span>
-                <span className="max-w-[65%] truncate font-semibold text-gray-900">
-                  {assigned}
-                </span>
-              </div>
-            </div>
-          </div>
-
+        <div className="space-y-4 px-5 py-4">
           <div className="rounded-2xl border border-gray-200 bg-white p-4">
             <div className="flex items-center gap-2">
               <Mail className="h-4 w-4 text-indigo-600" />
-              <p className="text-sm font-bold text-gray-900">Kontak</p>
+              <p className="text-sm font-bold text-gray-900">Info</p>
             </div>
-            <div className="mt-3 space-y-2 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-gray-500">Email</span>
-                <span className="max-w-[65%] truncate font-semibold text-gray-900">
-                  {item?.email || "-"}
-                </span>
+            <div className="mt-4 grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-3">
+              <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                <p className="text-xs font-medium text-gray-500">Nama</p>
+                <p className="mt-1 truncate font-semibold text-gray-900">
+                  {item?.nama || "-"}
+                </p>
               </div>
-              {item?.no_hp && (
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-gray-500">No HP</span>
-                  <span className="max-w-[65%] truncate font-semibold text-gray-900">
-                    {item?.no_hp}
-                  </span>
+              <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                <p className="text-xs font-medium text-gray-500">Email</p>
+                <p className="mt-1 truncate font-semibold text-gray-900">
+                  {item?.email || "-"}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                <p className="text-xs font-medium text-gray-500">NIM</p>
+                <p className="mt-1 truncate font-mono font-semibold text-gray-900">
+                  {item?.nim || "-"}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                <p className="text-xs font-medium text-gray-500">Divisi pilihan</p>
+                <p className="mt-1 truncate font-semibold text-gray-900">
+                  {preferred}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                <p className="text-xs font-medium text-gray-500">Divisi assigned</p>
+                <p className="mt-1 truncate font-semibold text-gray-900">
+                  {assigned}
+                </p>
+              </div>
+              {assignedBy && (
+                <div className="rounded-2xl bg-gray-50 px-4 py-3">
+                  <p className="text-xs font-medium text-gray-500">Oleh</p>
+                  <p className="mt-1 truncate font-semibold text-gray-900">
+                    {assignedBy}
+                  </p>
                 </div>
               )}
             </div>
           </div>
 
-          <div className="rounded-2xl border border-gray-200 bg-white p-4 md:col-span-2">
-            <div className="flex items-center gap-2">
-              <FileText className="h-4 w-4 text-indigo-600" />
-              <p className="text-sm font-bold text-gray-900">Berkas</p>
+          <div className="rounded-2xl border border-gray-200 bg-white p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-indigo-600" />
+                <p className="text-sm font-bold text-gray-900">Preview berkas</p>
+              </div>
+              {activeAttachment?.url && (
+                <a
+                  href={activeAttachment.url}
+                  download
+                  className="inline-flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-700 transition hover:bg-gray-50"
+                >
+                  <Download className="h-4 w-4" />
+                  Unduh
+                </a>
+              )}
             </div>
 
             {attachments.length === 0 ? (
@@ -117,20 +149,46 @@ const PendaftarDetailModal = ({ open, item, onClose }) => {
                 Tidak ada link berkas yang tersimpan.
               </p>
             ) : (
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {attachments.map((a) => (
-                  <a
-                    key={a.key}
-                    href={a.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="group inline-flex items-center justify-between gap-3 rounded-2xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-900 transition hover:bg-gray-50"
-                  >
-                    <span className="truncate">{a.label}</span>
-                    <ExternalLink className="h-4 w-4 text-gray-400 transition group-hover:text-gray-700" />
-                  </a>
-                ))}
-              </div>
+              <>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {attachments.map((a) => {
+                    const active = a.key === (activeAttachment?.key || attachments[0]?.key);
+                    return (
+                      <button
+                        key={a.key}
+                        type="button"
+                        onClick={() => setActiveKey(a.key)}
+                        className={`rounded-xl px-3 py-2 text-xs font-semibold transition ${
+                          active
+                            ? "bg-indigo-600 text-white"
+                            : "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"
+                        }`}
+                      >
+                        {a.label}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-3 overflow-hidden rounded-2xl border border-gray-200 bg-gray-50">
+                  {activeAttachment?.url ? (
+                    <iframe
+                      key={activeAttachment.key}
+                      title={activeAttachment.label}
+                      src={
+                        isLikelyPdf(activeAttachment.url)
+                          ? `${activeAttachment.url}#toolbar=1&navpanes=0`
+                          : activeAttachment.url
+                      }
+                      className="h-[620px] w-full bg-white"
+                    />
+                  ) : (
+                    <div className="flex h-[620px] items-center justify-center">
+                      <p className="text-sm text-gray-500">Tidak ada preview</p>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -140,4 +198,3 @@ const PendaftarDetailModal = ({ open, item, onClose }) => {
 };
 
 export default PendaftarDetailModal;
-
