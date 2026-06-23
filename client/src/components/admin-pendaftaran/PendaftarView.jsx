@@ -67,7 +67,7 @@ const PendaftarView = ({
           <select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value)}
-            className="w-full rounded-2xl border border-white/15 bg-white/10 px-3 py-2.5 text-sm text-white outline-none transition focus:border-emerald-200/70 focus:ring-4 focus:ring-emerald-200/10"
+            className="w-full rounded-2xl border border-white/15 bg-white/95 px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-emerald-500/60 focus:ring-4 focus:ring-emerald-500/10"
           >
             <option value="all">Semua status</option>
             <option value="assigned">Sudah di-assign</option>
@@ -77,7 +77,7 @@ const PendaftarView = ({
           <select
             value={filterDivisi}
             onChange={(e) => setFilterDivisi(e.target.value)}
-            className="w-full rounded-2xl border border-white/15 bg-white/10 px-3 py-2.5 text-sm text-white outline-none transition focus:border-emerald-200/70 focus:ring-4 focus:ring-emerald-200/10"
+            className="w-full rounded-2xl border border-white/15 bg-white/95 px-3 py-2.5 text-sm font-semibold text-slate-900 outline-none transition focus:border-emerald-500/60 focus:ring-4 focus:ring-emerald-500/10"
           >
             <option value="all">Semua divisi</option>
             {divisiOptions.map((d) => (

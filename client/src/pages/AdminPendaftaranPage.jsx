@@ -18,6 +18,7 @@ import {
   DivisiView,
   LoginForm,
   PendaftarView,
+  PendaftarDetailModal,
 } from "../components/admin-pendaftaran";
 
 const AdminPendaftaranPage = () => {
@@ -71,6 +72,7 @@ const AdminPendaftaranPage = () => {
     confirmState,
     setConfirmState,
     confirmDeletePendaftar,
+    selectedItem,
     setSelectedItem,
     fetchPendaftar,
     fetchAdminList,
@@ -289,6 +291,12 @@ const AdminPendaftaranPage = () => {
           handleDeleteAdmin(confirmDeleteAdmin?.id, confirmDeleteAdmin?.username)
         }
         onCancel={() => setConfirmDeleteAdmin(null)}
+      />
+
+      <PendaftarDetailModal
+        open={!!selectedItem}
+        item={selectedItem}
+        onClose={() => setSelectedItem(null)}
       />
 
       <ToastStack toasts={toasts} onDismiss={dismissToast} />

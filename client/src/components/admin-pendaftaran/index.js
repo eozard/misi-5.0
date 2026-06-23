@@ -6,3 +6,4 @@ export { default as DashboardView } from "./DashboardView";
 export { default as PendaftarView } from "./PendaftarView";
 export { default as DivisiView } from "./DivisiView";
 export { default as AdminManagementView } from "./AdminManagementView";
+export { default as PendaftarDetailModal } from "./PendaftarDetailModal";
