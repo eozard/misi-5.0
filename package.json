@@ -2,18 +2,20 @@
   "name": "absensi-pkl",
   "version": "1.0.0",
   "description": "Sistem Absensi PKL Fullstack",
+  "private": true,
   "type": "module",
+  "workspaces": [
+    "client",
+    "server"
+  ],
   "scripts": {
-    "dev": "node server/server.js",
-    "start": "node server/server.js",
-    "build": "cd client && npm install && npm run build",
-    "postinstall": "cd server && npm install && cd ../client && npm install",
-    "dev:frontend": "cd client && vite",
-    "build:frontend": "cd client && vite build",
-    "preview:frontend": "cd client && vite preview",
-    "seed": "node server/scripts/seedDatabase.js",
-    "create-admin": "node server/scripts/createAdminUser.js",
-    "list-users": "node server/scripts/listAllUsers.js"
+    "dev": "npm run dev -w server",
+    "start": "npm run start -w server",
+    "dev:server": "npm run dev -w server",
+    "dev:client": "npm run dev -w client",
+    "build": "npm run build -w client",
+    "preview": "npm run preview -w client",
+    "seed": "npm run seed -w server"
   },
   "engines": {
     "node": ">=20.0.0",
@@ -25,22 +27,5 @@
     "mysql"
   ],
   "author": "",
-  "license": "ISC",
-  "dependencies": {
-    "express": "^4.18.2",
-    "bcryptjs": "^3.0.3",
-    "jsonwebtoken": "^9.0.2",
-    "dotenv": "^16.3.1",
-    "cors": "^2.8.5",
-    "ip-range-check": "^0.2.0",
-    "mysql2": "^3.11.0",
-    "multer": "^2.1.1"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^4.2.0",
-    "autoprefixer": "^10.4.16",
-    "postcss": "^8.4.32",
-    "tailwindcss": "^3.3.5",
-    "vite": "^5.0.0"
-  }
+  "license": "ISC"
 }

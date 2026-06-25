@@ -2,6 +2,7 @@
   "name": "absensi-pkl-backend",
   "version": "1.0.0",
   "description": "Backend untuk sistem absensi PKL (MySQL)",
+  "private": true,
   "type": "module",
   "main": "server.js",
   "scripts": {
