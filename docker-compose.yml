@@ -1,0 +1,17 @@
+services:
+  pkl-bpti:
+    build: .
+    container_name: pkl-bpti-app
+    restart: unless-stopped
+
+    ports:
+      - "5000:5000"
+
+    env_file:
+      - .env
+
+    volumes:
+      - ./server/uploads:/app/server/uploads
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
