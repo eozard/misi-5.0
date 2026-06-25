@@ -1,5 +1,6 @@
 services:
   pkl-bpti:
+    image: pkl-bpti:latest
     build: .
     container_name: pkl-bpti-app
     restart: unless-stopped
