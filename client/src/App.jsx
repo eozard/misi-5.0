@@ -14,7 +14,7 @@ import ProtectedRoute from "./components/ProtectedRoute";
 
 function App() {
   return (
-    <Router basename="/pkl/">
+    <Router>
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/absen" element={<LoginPage />} />
