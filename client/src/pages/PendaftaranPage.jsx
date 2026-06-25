@@ -314,7 +314,7 @@ const PendaftaranPage = () => {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className={`text-sm font-medium truncate ${suratPersetujuan ? 'text-blue-700' : 'text-gray-700'}`}>
-                        {suratPersetujuan ? suratPersetujuan.name : "Upload Surat Persetujuan Sekolah"}
+                        {suratPersetujuan ? suratPersetujuan.name : "Upload Surat Persetujuan Sekolah/kampus"}
                       </p>
                       <p className="text-xs text-gray-500 mt-0.5">Maks. 10MB (Format PDF)</p>
                     </div>

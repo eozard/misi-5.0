@@ -1,6 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import { Download, FileText, Mail, User2, X } from "lucide-react";
 
+const API_URL = import.meta.env.VITE_API_URL || "/api";
+
+const resolveFileUrl = (rawUrl) => {
+  const url = String(rawUrl || "");
+  if (!url) return null;
+  if (/^https?:\/\//i.test(url)) return url;
+
+  if (url.startsWith("/uploads/")) {
+    try {
+      const origin = new URL(API_URL).origin;
+      return `${origin}${url}`;
+    } catch {
+      return url;
+    }
+  }
+
+  return url;
+};
+
 const pickAttachments = (item) => {
   const candidates = [
     { key: "cv_url", label: "CV" },
@@ -13,7 +32,7 @@ const pickAttachments = (item) => {
   return candidates
     .map((c) => ({
       label: c.label,
-      url: item?.[c.key],
+      url: resolveFileUrl(item?.[c.key]),
       key: c.key,
     }))
     .filter((x) => !!x.url);
