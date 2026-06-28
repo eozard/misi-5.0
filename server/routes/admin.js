@@ -509,4 +509,77 @@ export const updateIzinStatus = async (req, res) => {
   }
 };
 
+/*
+ * GET /api/admin/holidays
+ */
+export const getHolidays = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const [rows] = await conn.query("SELECT * FROM holidays ORDER BY tanggal ASC");
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error("Get holidays error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+};
+
+/*
+ * POST /api/admin/holidays
+ */
+export const addHoliday = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { tanggal, keterangan } = req.body;
+    if (!tanggal || !keterangan) {
+      return res.status(400).json({ success: false, message: "Tanggal dan Keterangan wajib diisi" });
+    }
+    
+    // Validasi apakah tanggal sudah ada
+    const [exist] = await conn.query("SELECT id FROM holidays WHERE tanggal = ?", [tanggal]);
+    if (exist.length > 0) {
+      return res.status(400).json({ success: false, message: "Tanggal libur tersebut sudah ada" });
+    }
+
+    const [result] = await conn.query(
+      "INSERT INTO holidays (tanggal, keterangan) VALUES (?, ?)",
+      [tanggal, keterangan]
+    );
+
+    const [newHoliday] = await conn.query("SELECT * FROM holidays WHERE id = ?", [result.insertId]);
+
+    console.log(`✅ Tanggal merah ditambahkan: ${tanggal} - ${keterangan}`);
+    return res.json({ success: true, message: "Tanggal libur berhasil ditambahkan", data: newHoliday[0] });
+  } catch (error) {
+    console.error("Add holiday error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+};
+
+/*
+ * DELETE /api/admin/holidays/:id
+ */
+export const deleteHoliday = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { id } = req.params;
+    const [result] = await conn.query("DELETE FROM holidays WHERE id = ?", [id]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Tanggal libur tidak ditemukan" });
+    }
+
+    console.log(`✅ Tanggal merah dihapus: id ${id}`);
+    return res.json({ success: true, message: "Tanggal libur berhasil dihapus" });
+  } catch (error) {
+    console.error("Delete holiday error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+};
+
 export default router;

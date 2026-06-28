@@ -105,6 +105,36 @@ async function seed() {
       );
     }
 
+    // 6. Sample Ahmad
+    const [ahmadRows] = await conn.query(
+      "SELECT id FROM users WHERE nama = ? LIMIT 1",
+      ["Ahmad"],
+    );
+    if (ahmadRows.length === 0) {
+      const hash = await bcrypt.hash("ahmad123", 10);
+      await conn.query(
+        `INSERT INTO users (nama, password, role, kelompok, devices, max_devices)
+         VALUES (?, ?, 'mahasiswa', 'jaringan', ?, 2)`,
+        ["Ahmad", hash, JSON.stringify([])],
+      );
+      console.log("✅ Sample Ahmad dibuat: nama=Ahmad, password=ahmad123");
+    }
+
+    // 7. Sample Jamilah (Mentor)
+    const [jamilahRows] = await conn.query(
+      "SELECT id FROM users WHERE nama = ? LIMIT 1",
+      ["Jamilah"],
+    );
+    if (jamilahRows.length === 0) {
+      const hash = await bcrypt.hash("jamilah123", 10);
+      await conn.query(
+        `INSERT INTO users (nama, password, role, kelompok, devices, max_devices)
+         VALUES (?, ?, 'mentor', 'jaringan', ?, 999)`,
+        ["Jamilah", hash, JSON.stringify([])],
+      );
+      console.log("✅ Sample Jamilah dibuat: nama=Jamilah, password=jamilah123");
+    }
+
     console.log("\n" + "=".repeat(60));
     console.log("🎉 Seed selesai!\n");
     console.log("Akun default:");
@@ -112,13 +142,15 @@ async function seed() {
     console.log("  Admin pendaftaran     : username=admin password=admin123");
     console.log("  Sample mahasiswa      : nama=mahasiswa01 password=mahasiswa123");
     console.log("  Sample anak SMK       : nama=smk01     password=smk123");
+    console.log("  Sample Ahmad          : nama=Ahmad     password=ahmad123");
+    console.log("  Sample Jamilah        : nama=Jamilah   password=jamilah123");
     console.log("=".repeat(60) + "\n");
   } catch (err) {
     console.error("❌ Seed error:", err);
     process.exit(1);
   } finally {
     conn.release();
-    await pool.end();
+    pool.end();
   }
 }
 

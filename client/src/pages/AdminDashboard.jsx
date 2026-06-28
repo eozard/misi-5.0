@@ -19,6 +19,8 @@ import {
 import axiosInstance from "../utils/axios";
 import ToastStack from "../components/Toast";
 import ConfirmDialog from "../components/ConfirmDialog";
+import Sidebar from "../components/Sidebar";
+import { Menu, PanelLeftClose, PanelLeftOpen, LayoutDashboard, BookOpen, Smartphone, Users as UsersIcon, FileText, Calendar as CalendarIcon } from "lucide-react";
 import { useToast } from "../hooks/useToast";
 
 const AdminDashboard = () => {
@@ -62,6 +64,10 @@ const AdminDashboard = () => {
   const [izinList, setIzinList] = useState([]);
   const [izinLoading, setIzinLoading] = useState(false);
   const [confirmState, setConfirmState] = useState(null);
+  // State tanggal merah / libur
+  const [holidays, setHolidays] = useState([]);
+  const [newHoliday, setNewHoliday] = useState({ tanggal: "", keterangan: "" });
+  const [addingHoliday, setAddingHoliday] = useState(false);
   // State logbook
   const [logbookList, setLogbookList] = useState([]);
   const [logbookLoading, setLogbookLoading] = useState(false);
@@ -74,6 +80,18 @@ const AdminDashboard = () => {
   // Notifikasi toast untuk feedback users
   const { toasts, pushToast, dismissToast } = useToast();
   const navigate = useNavigate();
+
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
+  const menuItems = [
+    { id: "stats", label: "Dashboard", icon: LayoutDashboard },
+    { id: "logbook", label: "Logbook", icon: BookOpen },
+    { id: "devices", label: "Devices", icon: Smartphone },
+    { id: "students", label: "Kelola User", icon: UsersIcon },
+    { id: "report", label: "Report", icon: FileText },
+    { id: "holidays", label: "Holidays", icon: CalendarIcon },
+  ];
 
   const kelompokOptions = [
     "machine learning",
@@ -94,13 +112,14 @@ const AdminDashboard = () => {
   const fetchAllData = async () => {
     setLoading(true);
     try {
-      const [statsRes, attendanceRes, studentsRes, devicesRes, usersRes] =
+      const [statsRes, attendanceRes, studentsRes, devicesRes, usersRes, holidaysRes] =
         await Promise.all([
           axiosInstance.get("/admin/stats"),
           axiosInstance.get("/admin/attendance-today"),
           axiosInstance.get("/admin/students"),
           axiosInstance.get("/admin/devices"),
           axiosInstance.get("/admin/users"),
+          axiosInstance.get("/holidays"),
         ]);
 
       if (statsRes.data.success) setStats(statsRes.data.stats);
@@ -110,6 +129,7 @@ const AdminDashboard = () => {
         setStudents(studentsRes.data.students || []);
       if (devicesRes.data.success) setDevices(devicesRes.data.devices || []);
       if (usersRes.data.success) setAllUsers(usersRes.data.users || []);
+      if (holidaysRes.data.success) setHolidays(holidaysRes.data.data || []);
     } catch (error) {
       console.error("Fetch error:", error);
     } finally {
@@ -621,6 +641,54 @@ const AdminDashboard = () => {
     });
   };
 
+  // Tambah tanggal merah
+  const handleAddHoliday = async (e) => {
+    e.preventDefault();
+    if (!newHoliday.tanggal || !newHoliday.keterangan) return;
+    setAddingHoliday(true);
+    try {
+      const response = await axiosInstance.post("/admin/holidays", newHoliday);
+      if (response.data.success) {
+        pushToast({ type: "success", title: "Berhasil", message: response.data.message });
+        setHolidays([...holidays, response.data.data].sort((a, b) => new Date(a.tanggal) - new Date(b.tanggal)));
+        setNewHoliday({ tanggal: "", keterangan: "" });
+      }
+    } catch (error) {
+      pushToast({
+        type: "error",
+        title: "Gagal",
+        message: error.response?.data?.message || "Gagal menambah libur",
+      });
+    } finally {
+      setAddingHoliday(false);
+    }
+  };
+
+  // Hapus tanggal merah
+  const handleDeleteHoliday = (holiday) => {
+    setConfirmState({
+      title: "Hapus Libur?",
+      message: `Hapus tanggal merah ${holiday.tanggal} (${holiday.keterangan})?`,
+      confirmText: "Hapus",
+      tone: "danger",
+      onConfirm: async () => {
+        try {
+          const response = await axiosInstance.delete(`/admin/holidays/${holiday.id}`);
+          if (response.data.success) {
+            pushToast({ type: "success", title: "Berhasil", message: response.data.message });
+            setHolidays(holidays.filter(h => h.id !== holiday.id));
+          }
+        } catch (error) {
+          pushToast({
+            type: "error",
+            title: "Gagal",
+            message: error.response?.data?.message || "Gagal hapus libur",
+          });
+        }
+      },
+    });
+  };
+
   // Export rekap absensi hari ini ke CSV
   const handleExport = () => {
     let csv = "\ufeffNama;Kelompok;Pagi;Sore;Status\r\n";
@@ -663,7 +731,7 @@ const AdminDashboard = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen overflow-hidden text-slate-100">
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
       <ConfirmDialog
         open={!!confirmState}
@@ -679,76 +747,95 @@ const AdminDashboard = () => {
           if (action) await action();
         }}
       />
-      {/* Header */}
-      <div className="bg-white shadow-sm border-b sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-2xl font-bold">Admin Dashboard</h1>
-              <p className="text-sm text-gray-600">Kelola sistem absensi PKL</p>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="btn-secondary flex items-center"
-            >
-              <LogOut className="w-4 h-4 mr-2" /> Logout
-            </button>
-          </div>
-        </div>
+      
+      <div className="absolute inset-0 bg-gradient-to-br from-blue-600 via-indigo-700 to-purple-800" />
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 h-96 w-96 rounded-full bg-white/10 blur-3xl" />
+        <div className="absolute -bottom-40 -left-40 h-96 w-96 rounded-full bg-purple-500/20 blur-3xl" />
+        <div className="absolute left-1/2 top-1/2 h-[800px] w-[800px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-500/10 blur-3xl" />
       </div>
+      <div
+        className="absolute inset-0 opacity-20"
+        style={{
+          backgroundImage:
+            'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%23ffffff\' fill-opacity=\'0.4\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")',
+        }}
+      />
 
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        {/* Tabs */}
-        <div className="border-b border-gray-200 mb-6">
-          <div className="flex space-x-8">
-            {["stats", "logbook", "devices", "students", "report"].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`py-4 px-1 border-b-2 font-medium transition ${
-                  activeTab === tab
-                    ? "border-blue-500 text-blue-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700"
-                }`}
-              >
-                {tab === "izin"
-                  ? "Izin"
-                  : tab === "logbook"
-                    ? "Logbook"
-                    : tab.charAt(0).toUpperCase() + tab.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
+      <div className="relative z-10 px-3 py-3 sm:px-5 lg:px-6">
+        <div className="mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[1380px] items-stretch gap-4">
+          <Sidebar
+            title="Sistem Absensi"
+            subtitle="Dashboard Admin"
+            user={{ nama: "Admin", role: "admin" }}
+            menuItems={menuItems}
+            activeMenu={activeTab}
+            onMenuClick={setActiveTab}
+            onLogout={handleLogout}
+            collapsed={sidebarCollapsed}
+            onToggle={() => setSidebarCollapsed((prev) => !prev)}
+            mobileOpen={mobileSidebarOpen}
+            onCloseMobile={() => setMobileSidebarOpen(false)}
+          />
 
+          <main className="min-w-0 flex-1 space-y-4">
+            <div className="rounded-3xl border border-white/15 bg-white/10 px-3 py-2 shadow-2xl backdrop-blur-xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setMobileSidebarOpen(true)}
+                    className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-white transition hover:bg-white/15 xl:hidden"
+                  >
+                    <Menu className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarCollapsed((prev) => !prev)}
+                    className="hidden h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-white transition hover:bg-white/15 xl:flex"
+                    aria-label={sidebarCollapsed ? "Buka sidebar" : "Tutup sidebar"}
+                  >
+                    {sidebarCollapsed ? (
+                      <PanelLeftOpen className="h-5 w-5" />
+                    ) : (
+                      <PanelLeftClose className="h-5 w-5" />
+                    )}
+                  </button>
+                  <div className="ml-1 text-sm font-semibold text-white">
+                    {menuItems.find((m) => m.id === activeTab)?.label || "Dashboard"}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-white/15 bg-white/10 p-4 shadow-2xl backdrop-blur-xl max-h-[calc(100vh-6rem)] overflow-y-auto custom-scrollbar">
         {/* Stats Tab */}
         {activeTab === "stats" && stats && (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Total Mahasiswa</p>
+                  <p className="text-sm text-white/80">Total Mahasiswa</p>
                   <p className="text-3xl font-bold">{stats.totalMahasiswa}</p>
                 </div>
                 <Users className="w-12 h-12 text-blue-600" />
               </div>
             </div>
 
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Total Anak SMK</p>
+                  <p className="text-sm text-white/80">Total Anak SMK</p>
                   <p className="text-3xl font-bold">{stats.totalAnakSmk}</p>
                 </div>
                 <Users className="w-12 h-12 text-green-600" />
               </div>
             </div>
 
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Hadir Hari Ini</p>
+                  <p className="text-sm text-white/80">Hadir Hari Ini</p>
                   <p className="text-3xl font-bold text-green-600">
                     {stats.hadirToday}
                   </p>
@@ -757,10 +844,10 @@ const AdminDashboard = () => {
               </div>
             </div>
 
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-gray-600">Izin Hari Ini</p>
+                  <p className="text-sm text-white/80">Izin Hari Ini</p>
                   <p className="text-3xl font-bold text-yellow-600">
                     {stats.izinToday}
                   </p>
@@ -775,13 +862,13 @@ const AdminDashboard = () => {
         {activeTab === "logbook" && (
           <div className="space-y-4">
             {/* Filter */}
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <h2 className="text-xl font-bold mb-4">🔍 Filter Logbook</h2>
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                 <div>
                   <label className="block text-sm font-medium mb-1">Status</label>
                   <select
-                    className="input-field"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                     value={logbookFilter.status}
                     onChange={(e) =>
                       setLogbookFilter({
@@ -799,7 +886,7 @@ const AdminDashboard = () => {
                   <label className="block text-sm font-medium mb-1">Nama</label>
                   <input
                     type="text"
-                    className="input-field"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                     placeholder="Cari nama..."
                     value={logbookFilter.nama}
                     onChange={(e) =>
@@ -816,7 +903,7 @@ const AdminDashboard = () => {
                   </label>
                   <input
                     type="date"
-                    className="input-field"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                     value={logbookFilter.fromDate}
                     onChange={(e) =>
                       setLogbookFilter({
@@ -832,7 +919,7 @@ const AdminDashboard = () => {
                   </label>
                   <input
                     type="date"
-                    className="input-field"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                     value={logbookFilter.toDate}
                     onChange={(e) =>
                       setLogbookFilter({
@@ -857,7 +944,7 @@ const AdminDashboard = () => {
             </div>
 
             {/* List Logbook */}
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-bold">
                   📓 Daftar Logbook ({logbookList.length})
@@ -869,7 +956,7 @@ const AdminDashboard = () => {
                   <Loader2 className="w-6 h-6 animate-spin mx-auto text-blue-600" />
                 </div>
               ) : logbookList.length === 0 ? (
-                <p className="text-center text-gray-500 py-6">
+                <p className="text-center text-white/60 py-6">
                   Belum ada logbook
                 </p>
               ) : (
@@ -885,10 +972,10 @@ const AdminDashboard = () => {
                     >
                       <div className="flex items-start justify-between gap-3 mb-2">
                         <div>
-                          <p className="font-semibold text-gray-900">
+                          <p className="font-semibold text-white">
                             {item.nama}
                           </p>
-                          <p className="text-xs text-gray-500">
+                          <p className="text-xs text-white/60">
                             {item.kelompok && (
                               <span className="capitalize mr-2">
                                 {item.kelompok}
@@ -935,16 +1022,16 @@ const AdminDashboard = () => {
                           </button>
                         </div>
                       </div>
-                      <p className="text-sm text-gray-700 whitespace-pre-wrap mb-1">
+                      <p className="text-sm text-white/90 whitespace-pre-wrap mb-1">
                         <strong>Kegiatan:</strong> {item.kegiatan}
                       </p>
                       {item.kendala && (
-                        <p className="text-sm text-gray-600 whitespace-pre-wrap">
+                        <p className="text-sm text-white/80 whitespace-pre-wrap">
                           <strong>Kendala:</strong> {item.kendala}
                         </p>
                       )}
                       {item.submitted_at && (
-                        <p className="text-xs text-gray-400 mt-2">
+                        <p className="text-xs text-white/50 mt-2">
                           Disubmit:{" "}
                           {new Date(item.submitted_at).toLocaleString("id-ID")}
                         </p>
@@ -960,25 +1047,25 @@ const AdminDashboard = () => {
         {/* Devices Tab */}
         {activeTab === "devices" && (
           <div className="space-y-4">
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <h2 className="text-xl font-bold mb-4">📱 Daftar Device</h2>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-white/5">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Device ID
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         User
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Kelompok
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Last Used
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Aksi
                       </th>
                     </tr>
@@ -986,8 +1073,8 @@ const AdminDashboard = () => {
                   <tbody className="divide-y divide-gray-200">
                     {devices.length > 0 ? (
                       devices.map((device, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50">
-                          <td className="px-6 py-4 text-sm font-mono text-gray-900 break-all">
+                        <tr key={idx} className="hover:bg-white/5">
+                          <td className="px-6 py-4 text-sm font-mono text-white break-all">
                             {device.device_id}
                           </td>
                           <td className="px-6 py-4 text-sm font-medium">
@@ -996,7 +1083,7 @@ const AdminDashboard = () => {
                           <td className="px-6 py-4 text-sm capitalize">
                             {device.kelompok}
                           </td>
-                          <td className="px-6 py-4 text-sm text-gray-600">
+                          <td className="px-6 py-4 text-sm text-white/80">
                             {new Date(device.last_used).toLocaleDateString(
                               "id-ID",
                               {
@@ -1024,7 +1111,7 @@ const AdminDashboard = () => {
                       <tr>
                         <td
                           colSpan="5"
-                          className="px-6 py-4 text-center text-gray-500"
+                          className="px-6 py-4 text-center text-white/60"
                         >
                           Belum ada device
                         </td>
@@ -1041,14 +1128,14 @@ const AdminDashboard = () => {
         {activeTab === "attendance" && (
           <div className="space-y-4">
             {/* Filter & Search */}
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <div className="flex flex-col md:flex-row gap-4">
                 <div className="flex-1 relative">
-                  <Search className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
+                  <Search className="absolute left-3 top-3 w-5 h-5 text-white/50" />
                   <input
                     type="text"
                     placeholder="Cari nama atau kelompok..."
-                    className="input-field pl-10"
+                    className="input-field pl-10 bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                   />
@@ -1057,7 +1144,7 @@ const AdminDashboard = () => {
                 <select
                   value={filter}
                   onChange={(e) => setFilter(e.target.value)}
-                  className="input-field"
+                  className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                 >
                   <option value="all">Semua</option>
                   <option value="hadir">Hadir</option>
@@ -1073,31 +1160,31 @@ const AdminDashboard = () => {
             </div>
 
             {/* Attendance Table */}
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <h2 className="text-xl font-bold mb-4">Absensi Hari Ini</h2>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-white/5">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Nama
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Role
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Kelompok
                       </th>
-                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-center text-xs font-medium text-white/60 uppercase">
                         Pagi
                       </th>
-                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-center text-xs font-medium text-white/60 uppercase">
                         Sore
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Status
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Keterangan
                       </th>
                     </tr>
@@ -1105,11 +1192,11 @@ const AdminDashboard = () => {
                   <tbody className="divide-y divide-gray-200">
                     {filteredAttendance.length > 0 ? (
                       filteredAttendance.map((item, idx) => (
-                        <tr key={idx} className="hover:bg-gray-50">
+                        <tr key={idx} className="hover:bg-white/5">
                           <td className="px-6 py-4 text-sm font-medium">
                             {item.nama}
                           </td>
-                          <td className="px-6 py-4 text-sm text-gray-600 capitalize">
+                          <td className="px-6 py-4 text-sm text-white/80 capitalize">
                             {item.kelompok}
                           </td>
                           <td className="px-6 py-4 text-center text-sm">
@@ -1118,7 +1205,7 @@ const AdminDashboard = () => {
                                 {item.pagi.jam_masuk}
                               </span>
                             ) : (
-                              <span className="text-gray-400">-</span>
+                              <span className="text-white/50">-</span>
                             )}
                           </td>
                           <td className="px-6 py-4 text-center text-sm">
@@ -1127,7 +1214,7 @@ const AdminDashboard = () => {
                                 {item.sore.jam_masuk}
                               </span>
                             ) : (
-                              <span className="text-gray-400">-</span>
+                              <span className="text-white/50">-</span>
                             )}
                           </td>
                           <td className="px-6 py-4">
@@ -1144,7 +1231,7 @@ const AdminDashboard = () => {
                       <tr>
                         <td
                           colSpan="5"
-                          className="px-6 py-4 text-center text-gray-500"
+                          className="px-6 py-4 text-center text-white/60"
                         >
                           Tidak ada data
                         </td>
@@ -1161,7 +1248,7 @@ const AdminDashboard = () => {
         {activeTab === "students" && (
           <div className="space-y-4">
             {/* Create User Form */}
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <h2 className="text-xl font-bold mb-4">➕ Buat User Baru</h2>
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                 <div>
@@ -1169,7 +1256,7 @@ const AdminDashboard = () => {
                   <input
                     type="text"
                     placeholder="Nama user"
-                    className="input-field"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                     value={newUser.nama}
                     onChange={(e) =>
                       setNewUser({ ...newUser, nama: e.target.value })
@@ -1184,7 +1271,7 @@ const AdminDashboard = () => {
                   <input
                     type="password"
                     placeholder="Password"
-                    className="input-field"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                     value={newUser.password}
                     onChange={(e) =>
                       setNewUser({ ...newUser, password: e.target.value })
@@ -1195,7 +1282,7 @@ const AdminDashboard = () => {
                 <div>
                   <label className="block text-sm font-medium mb-1">Role</label>
                   <select
-                    className="input-field"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                     value={newUser.role}
                     onChange={(e) =>
                       setNewUser({ ...newUser, role: e.target.value })
@@ -1203,6 +1290,7 @@ const AdminDashboard = () => {
                   >
                     <option value="mahasiswa">Mahasiswa</option>
                     <option value="anak_smk">Anak SMK</option>
+                    <option value="mentor">Mentor</option>
                   </select>
                 </div>
 
@@ -1211,7 +1299,7 @@ const AdminDashboard = () => {
                     Kelompok
                   </label>
                   <select
-                    className="input-field"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                     value={newUser.kelompok}
                     onChange={(e) =>
                       setNewUser({ ...newUser, kelompok: e.target.value })
@@ -1241,13 +1329,13 @@ const AdminDashboard = () => {
               </div>
             </div>
 
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <h2 className="text-xl font-bold mb-4">🔒 Reset Password User</h2>
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                 <div>
                   <label className="block text-sm font-medium mb-1">User</label>
                   <select
-                    className="input-field"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                     value={resetUserId}
                     onChange={(e) => setResetUserId(e.target.value)}
                   >
@@ -1267,7 +1355,7 @@ const AdminDashboard = () => {
                   <input
                     type="password"
                     placeholder="Password baru"
-                    className="input-field"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                     value={resetPassword}
                     onChange={(e) => setResetPassword(e.target.value)}
                   />
@@ -1291,25 +1379,25 @@ const AdminDashboard = () => {
             </div>
 
             {/* Users List */}
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <h2 className="text-xl font-bold mb-4">👥 Daftar Semua User</h2>
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-white/5">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Nama
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Role
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Kelompok
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Device Terdaftar (Terpakai/Maks)
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Aksi
                       </th>
                     </tr>
@@ -1319,7 +1407,7 @@ const AdminDashboard = () => {
                       allUsers.map((user) => (
                         <tr
                           key={user.id || user.nama}
-                          className="hover:bg-gray-50"
+                          className="hover:bg-white/5"
                         >
                           <td className="px-6 py-4 text-sm font-medium">
                             {user.nama}
@@ -1329,29 +1417,33 @@ const AdminDashboard = () => {
                               className={
                                 user.role === "admin"
                                   ? "badge-purple"
-                                  : user.role === "mahasiswa"
-                                    ? "badge-blue"
-                                    : "badge-green"
+                                  : user.role === "mentor"
+                                    ? "badge-yellow"
+                                    : user.role === "mahasiswa"
+                                      ? "badge-blue"
+                                      : "badge-green"
                               }
                             >
                               {user.role === "admin"
                                 ? "Admin"
-                                : user.role === "mahasiswa"
-                                  ? "Mahasiswa"
-                                  : "Anak SMK"}
+                                : user.role === "mentor"
+                                  ? "Mentor"
+                                  : user.role === "mahasiswa"
+                                    ? "Mahasiswa"
+                                    : "Anak SMK"}
                             </span>
                           </td>
                           <td className="px-6 py-4 text-sm capitalize">
                             {user.kelompok || "-"}
                           </td>
                           <td className="px-6 py-4 text-sm">
-                            {user.role === "admin"
+                            {(user.role === "admin" || user.role === "mentor")
                               ? "-"
                               : `${user.devices_count ?? 0}/${user.max_devices ?? 0}`}
                           </td>
                           <td className="px-6 py-4 text-sm">
                             {user.role === "admin" ? (
-                              <span className="text-gray-400">-</span>
+                              <span className="text-white/50">-</span>
                             ) : (
                               <button
                                 onClick={() => handleDeleteUser(user)}
@@ -1368,7 +1460,7 @@ const AdminDashboard = () => {
                       <tr>
                         <td
                           colSpan="5"
-                          className="px-6 py-4 text-center text-gray-500"
+                          className="px-6 py-4 text-center text-white/60"
                         >
                           Belum ada user
                         </td>
@@ -1381,24 +1473,24 @@ const AdminDashboard = () => {
 
             {/* Old Attendance History Section (if needed) */}
             {selectedStudent && (
-              <div className="card">
+              <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
                 <h2 className="text-xl font-bold mb-4">
                   Riwayat Absensi {selectedStudent}
                 </h2>
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
+                    <thead className="bg-white/5">
                       <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                           Tanggal
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                           Sesi
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                           Jam
                         </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                        <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                           Status
                         </th>
                       </tr>
@@ -1431,7 +1523,7 @@ const AdminDashboard = () => {
                                 {item.status.replace("_", " ")}
                               </span>
                             </td>
-                            <td className="px-6 py-4 text-sm text-gray-600">
+                            <td className="px-6 py-4 text-sm text-white/80">
                               {isIzin ? item.keterangan || "-" : "-"}
                             </td>
                           </tr>
@@ -1440,7 +1532,7 @@ const AdminDashboard = () => {
                         <tr>
                           <td
                             colSpan="4"
-                            className="px-6 py-4 text-center text-gray-500"
+                            className="px-6 py-4 text-center text-white/60"
                           >
                             Belum ada riwayat absensi
                           </td>
@@ -1459,7 +1551,7 @@ const AdminDashboard = () => {
         {activeTab === "report" && (
           <div className="space-y-4">
             {/* Filter Card */}
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <h2 className="text-xl font-bold mb-4">🔍 Filter Absensi</h2>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                 <div>
@@ -1467,10 +1559,10 @@ const AdminDashboard = () => {
                     Dari Tanggal
                   </label>
                   <div className="relative">
-                    <Calendar className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
+                    <Calendar className="absolute left-3 top-3 w-4 h-4 text-white/50" />
                     <input
                       type="date"
-                      className="input-field pl-10"
+                      className="input-field pl-10 bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                       value={reportFilters.fromDate}
                       onChange={(e) =>
                         setReportFilters({
@@ -1487,10 +1579,10 @@ const AdminDashboard = () => {
                     Sampai Tanggal
                   </label>
                   <div className="relative">
-                    <Calendar className="absolute left-3 top-3 w-4 h-4 text-gray-400" />
+                    <Calendar className="absolute left-3 top-3 w-4 h-4 text-white/50" />
                     <input
                       type="date"
-                      className="input-field pl-10"
+                      className="input-field pl-10 bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                       value={reportFilters.toDate}
                       onChange={(e) =>
                         setReportFilters({
@@ -1507,7 +1599,7 @@ const AdminDashboard = () => {
                     Kelompok
                   </label>
                   <select
-                    className="input-field"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                     value={reportFilters.kelompok}
                     onChange={(e) => {
                       const nextKelompok = e.target.value;
@@ -1544,7 +1636,7 @@ const AdminDashboard = () => {
                     Siswa
                   </label>
                   <select
-                    className="input-field"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                     value={reportFilters.nama}
                     onChange={(e) =>
                       setReportFilters({
@@ -1579,7 +1671,7 @@ const AdminDashboard = () => {
             </div>
 
             {/* Report Data Card */}
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-xl font-bold">
                   📋 Data Absensi ({reportData.length})
@@ -1595,33 +1687,33 @@ const AdminDashboard = () => {
 
               <div className="overflow-x-auto">
                 <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
+                  <thead className="bg-white/5">
                     <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Nama
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Role
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Jurusan
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Tanggal
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Sesi
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Jam Masuk
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Status
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Keterangan
                       </th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
                         Aksi
                       </th>
                     </tr>
@@ -1643,7 +1735,7 @@ const AdminDashboard = () => {
                                 : "Izin Pending";
 
                         return (
-                          <tr key={idx} className="hover:bg-gray-50">
+                          <tr key={idx} className="hover:bg-white/5">
                             <td className="px-6 py-4 text-sm font-medium">
                               {item.nama}
                             </td>
@@ -1694,7 +1786,7 @@ const AdminDashboard = () => {
                                 normalizedApproval === "approved" ||
                                 normalizedApproval === "rejected" ||
                                 normalizedApproval === "cancelled" ? (
-                                  <span className="text-sm text-gray-500">
+                                  <span className="text-sm text-white/60">
                                     {item.approved_by
                                       ? `oleh ${item.approved_by}`
                                       : "-"}
@@ -1724,7 +1816,7 @@ const AdminDashboard = () => {
                                   </div>
                                 )
                               ) : (
-                                <span className="text-sm text-gray-400">-</span>
+                                <span className="text-sm text-white/50">-</span>
                               )}
                             </td>
                           </tr>
@@ -1734,7 +1826,7 @@ const AdminDashboard = () => {
                       <tr>
                         <td
                           colSpan="7"
-                          className="px-6 py-4 text-center text-gray-500"
+                          className="px-6 py-4 text-center text-white/60"
                         >
                           Klik "Filter" untuk menampilkan data
                         </td>
@@ -1746,6 +1838,100 @@ const AdminDashboard = () => {
             </div>
           </div>
         )}
+
+        {/* Holidays Tab */}
+        {activeTab === "holidays" && (
+          <div className="space-y-6">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4 flex items-center">
+                <Calendar className="w-6 h-6 mr-2 text-red-600" />
+                Tambah Tanggal Merah
+              </h2>
+              <form onSubmit={handleAddHoliday} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1 text-white/90">Tanggal</label>
+                  <input
+                    type="date"
+                    required
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={newHoliday.tanggal}
+                    onChange={(e) => setNewHoliday({ ...newHoliday, tanggal: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1 text-white/90">Keterangan</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Contoh: Hari Kemerdekaan"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={newHoliday.keterangan}
+                    onChange={(e) => setNewHoliday({ ...newHoliday, keterangan: e.target.value })}
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="submit"
+                    disabled={addingHoliday}
+                    className="btn-primary w-full h-[42px] flex items-center justify-center"
+                  >
+                    {addingHoliday ? <Loader2 className="w-5 h-5 animate-spin" /> : "Tambah"}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4">Daftar Tanggal Merah</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-white/5 border-y">
+                      <th className="px-6 py-4 text-sm font-semibold text-white/80">Tanggal</th>
+                      <th className="px-6 py-4 text-sm font-semibold text-white/80">Keterangan</th>
+                      <th className="px-6 py-4 text-sm font-semibold text-white/80">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {holidays.length > 0 ? (
+                      holidays.map((holiday) => (
+                        <tr key={holiday.id} className="hover:bg-white/5">
+                          <td className="px-6 py-4 text-sm text-red-600 font-medium">
+                            {new Date(holiday.tanggal).toLocaleDateString("id-ID", {
+                              weekday: "long",
+                              year: "numeric",
+                              month: "long",
+                              day: "numeric",
+                            })}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-800">{holiday.keterangan}</td>
+                          <td className="px-6 py-4">
+                            <button
+                              onClick={() => handleDeleteHoliday(holiday)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Hapus"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan="3" className="px-6 py-8 text-center text-white/60">
+                          Belum ada tanggal merah yang ditambahkan
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+            </div>
+          </main>
+        </div>
       </div>
     </div>
   );

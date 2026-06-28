@@ -27,11 +27,12 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs";
+import multer from "multer";
 
 // PENTING: Load .env SEBELUM import module lain
 dotenv.config();
 
-import { verifyToken, isMahasiswa, isAdmin } from "./middleware/auth.js";
+import { verifyToken, isMahasiswa, isAdmin, isMentor } from "./middleware/auth.js";
 import { wifiKampus } from "./middleware/wifiKampus.js";
 import { pool, testConnection } from "./config/db.js";
 import { UPLOAD_ROOT } from "./config/storage.js";
@@ -43,6 +44,10 @@ import {
   submitIzin,
   getIzin,
   cancelIzin,
+  getGrades,
+  getCertificates,
+  getTugasAkhir,
+  submitTugasAkhir,
 } from "./routes/auth.js";
 
 import {
@@ -59,11 +64,15 @@ import {
   getAttendanceReport,
   getAllIzin,
   updateIzinStatus,
+  getHolidays,
+  addHoliday,
+  deleteHoliday,
 } from "./routes/admin.js";
 
 import pendaftaranRoutes from "./routes/pendaftaran.js";
 import adminPendaftaranRoutes from "./routes/adminPendaftaran.js";
 import logbookRoutes from "./routes/logbook.js";
+import mentorRoutes from "./routes/mentor.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -172,6 +181,17 @@ app.get("/api/riwayat", verifyToken, isMahasiswa, getRiwayat);
 app.post("/api/izin", verifyToken, isMahasiswa, submitIzin);
 app.get("/api/izin", verifyToken, isMahasiswa, getIzin);
 app.delete("/api/izin/:id", verifyToken, isMahasiswa, cancelIzin);
+app.get("/api/grades", verifyToken, isMahasiswa, getGrades);
+app.get("/api/certificates", verifyToken, isMahasiswa, getCertificates);
+
+const taUpload = multer({ storage: multer.memoryStorage() });
+app.get("/api/tugas-akhir", verifyToken, isMahasiswa, getTugasAkhir);
+app.post("/api/tugas-akhir", verifyToken, isMahasiswa, taUpload.single("file"), submitTugasAkhir);
+
+// ============================================================================
+// MENTOR ROUTES
+// ============================================================================
+app.use("/api/mentor", verifyToken, isMentor, mentorRoutes);
 
 // ============================================================================
 // ADMIN ROUTES
@@ -209,6 +229,9 @@ app.delete("/api/admin/users/:id", verifyToken, isAdmin, deleteUser);
 app.get("/api/admin/report", verifyToken, isAdmin, getAttendanceReport);
 app.get("/api/admin/izin", verifyToken, isAdmin, getAllIzin);
 app.put("/api/admin/izin/:id", verifyToken, isAdmin, updateIzinStatus);
+app.get("/api/holidays", getHolidays); // Public route for holidays
+app.post("/api/admin/holidays", verifyToken, isAdmin, addHoliday);
+app.delete("/api/admin/holidays/:id", verifyToken, isAdmin, deleteHoliday);
 
 // ============================================================================
 // SPA FALLBACK (harus di paling akhir)

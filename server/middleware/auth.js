@@ -143,3 +143,21 @@ export const isAdmin = (req, res, next) => {
 
   next(); // Lanjut ke handler berikutnya
 };
+
+/*
+ * MIDDLEWARE: isMentor
+ * ============================================================================
+ * Fungsi: Membatasi akses endpoint hanya untuk user dengan role mentor
+ * ============================================================================
+ */
+export const isMentor = (req, res, next) => {
+  console.log('🎓 IS_MENTOR MIDDLEWARE - User role:', req.user?.role);
+  // Cek apakah role adalah mentor
+  if (req.user.role !== 'mentor') {
+    return res
+      .status(403)
+      .json({ success: false, message: 'Akses hanya untuk mentor' });
+  }
+  console.log('✅ IS_MENTOR: Passed, user:', req.user.nama);
+  next(); // Lanjut ke handler berikutnya
+};

@@ -10,6 +10,7 @@ import MahasiswaDashboard from "./pages/MahasiswaDashboard";
 import AdminDashboard from "./pages/AdminDashboard";
 import PendaftaranPage from "./pages/PendaftaranPage";
 import AdminPendaftaranPage from "./pages/AdminPendaftaranPage";
+import MentorDashboard from "./pages/MentorDashboard";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 function App() {
@@ -33,6 +34,14 @@ function App() {
           element={
             <ProtectedRoute allowedRoles={["admin"]}>
               <AdminDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/mentor"
+          element={
+            <ProtectedRoute allowedRoles={["mentor"]}>
+              <MentorDashboard />
             </ProtectedRoute>
           }
         />

@@ -18,9 +18,16 @@ import {
   Trash2,
   Edit3,
   Calendar,
+  Award,
+  Medal,
+  Download,
+  GraduationCap,
+  FileCheck,
 } from "lucide-react";
 import axiosInstance from "../utils/axios";
 import ToastStack from "../components/Toast";
+import Sidebar from "../components/Sidebar";
+import { Menu, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import ConfirmDialog from "../components/ConfirmDialog";
 import { useToast } from "../hooks/useToast";
 
@@ -55,9 +62,34 @@ const MahasiswaDashboard = () => {
   });
   const [logbookLoading, setLogbookLoading] = useState(false);
   const [editingLogbookId, setEditingLogbookId] = useState(null);
+  // State tanggal merah
+  const [holidays, setHolidays] = useState([]);
+  // State Penilaian
+  const [grades, setGrades] = useState([]);
+  // State Sertifikat
+  const [certificates, setCertificates] = useState([]);
+  
+  // State Tugas Akhir
+  const [tugasAkhirList, setTugasAkhirList] = useState([]);
+  const [taForm, setTaForm] = useState({ judul: "", deskripsi: "", file: null });
+  const [taLoading, setTaLoading] = useState(false);
+
   // Notifikasi toast untuk feedback user
   const { toasts, pushToast, dismissToast } = useToast();
   const navigate = useNavigate();
+
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
+  const menuItems = [
+    { id: "absensi", label: "Absensi", icon: CheckCircle },
+    { id: "logbook", label: "Logbook", icon: BookOpen },
+    { id: "izin", label: "Izin", icon: FileText },
+    { id: "holidays", label: "Libur", icon: Calendar },
+    { id: "tugasAkhir", label: "Tugas Akhir", icon: GraduationCap },
+    { id: "grades", label: "Penilaian", icon: Award },
+    { id: "certificates", label: "Sertifikat", icon: Medal },
+  ];
 
   // Helper: format tanggal hari ini YYYY-MM-DD
   const todayString = () => {
@@ -82,14 +114,28 @@ const MahasiswaDashboard = () => {
       user: storedUser?.nama,
     });
 
-    // Small delay to ensure localStorage is fully written
     setTimeout(() => {
       fetchRiwayat();
       fetchIzin();
       fetchLogbookToday();
       fetchLogbookList();
+      fetchHolidays();
+      fetchGrades();
+      fetchCertificates();
+      fetchTugasAkhir();
     }, 150);
   }, []);
+
+  const fetchHolidays = async () => {
+    try {
+      const res = await axiosInstance.get("/holidays");
+      if (res.data.success) {
+        setHolidays(res.data.data || []);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
 
   // Update status waktu absen setiap detik
   useEffect(() => {
@@ -160,6 +206,71 @@ const MahasiswaDashboard = () => {
       }
     } catch (error) {
       console.error("Fetch izin error:", error);
+    }
+  };
+
+  const fetchGrades = async () => {
+    try {
+      const response = await axiosInstance.get("/grades");
+      if (response.data.success) {
+        setGrades(response.data.data || []);
+      }
+    } catch (error) {
+      console.error("Fetch grades error:", error);
+    }
+  };
+
+  const fetchCertificates = async () => {
+    try {
+      const response = await axiosInstance.get("/certificates");
+      if (response.data.success) {
+        setCertificates(response.data.data || []);
+      }
+    } catch (error) {
+      console.error("Fetch certificates error:", error);
+    }
+  };
+
+  // ====== TUGAS AKHIR FUNCTIONS ======
+  const fetchTugasAkhir = async () => {
+    try {
+      const response = await axiosInstance.get("/tugas-akhir");
+      if (response.data.success) {
+        setTugasAkhirList(response.data.data || []);
+      }
+    } catch (error) {
+      console.error("Fetch tugas akhir error:", error);
+    }
+  };
+
+  const handleSubmitTA = async (e) => {
+    e.preventDefault();
+    if (!taForm.judul.trim() || !taForm.file) {
+      pushToast({ type: "warning", title: "Form tidak lengkap", message: "Judul dan file proposal wajib diisi" });
+      return;
+    }
+
+    setTaLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append("judul", taForm.judul);
+      formData.append("deskripsi", taForm.deskripsi);
+      formData.append("file", taForm.file);
+
+      const res = await axiosInstance.post("/tugas-akhir", formData, {
+        headers: { "Content-Type": "multipart/form-data" }
+      });
+
+      if (res.data.success) {
+        pushToast({ type: "success", title: "Berhasil", message: "Pengajuan Tugas Akhir berhasil dikirim" });
+        setTaForm({ judul: "", deskripsi: "", file: null });
+        fetchTugasAkhir();
+      }
+    } catch (error) {
+      console.error("Submit TA error:", error);
+      pushToast({ type: "error", title: "Gagal", message: error.response?.data?.message || "Gagal mengirim pengajuan" });
+    } finally {
+      setTaLoading(false);
     }
   };
 
@@ -513,7 +624,7 @@ const MahasiswaDashboard = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen overflow-hidden text-slate-100">
       <ToastStack toasts={toasts} onDismiss={dismissToast} />
       <ConfirmDialog
         open={!!confirmState}
@@ -529,278 +640,270 @@ const MahasiswaDashboard = () => {
           if (action) await action();
         }}
       />
-      {/* Header */}
-      <div className="bg-white shadow-sm border-b sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-2xl font-bold">Dashboard Mahasiswa</h1>
-              <p className="text-sm text-gray-600">
-                Selamat datang,{" "}
-                <span className="font-semibold">{user?.nama}</span>
-              </p>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="btn-secondary flex items-center"
-            >
-              <LogOut className="w-4 h-4 mr-2" /> Logout
-            </button>
-          </div>
-        </div>
+
+      <div className="absolute inset-0 bg-gradient-to-br from-blue-600 via-indigo-700 to-purple-800" />
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 h-96 w-96 rounded-full bg-white/10 blur-3xl" />
+        <div className="absolute -bottom-40 -left-40 h-96 w-96 rounded-full bg-purple-500/20 blur-3xl" />
+        <div className="absolute left-1/2 top-1/2 h-[800px] w-[800px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-blue-500/10 blur-3xl" />
       </div>
+      <div
+        className="absolute inset-0 opacity-20"
+        style={{
+          backgroundImage:
+            'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%23ffffff\' fill-opacity=\'0.4\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")',
+        }}
+      />
 
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        {/* Info Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          {/* Timer */}
-          <div className="card">
-            <div className="flex items-center">
-              <Clock className="w-8 h-8 text-blue-600 mr-3" />
-              <div>
-                <p className="text-sm text-gray-600">Jam Sekarang</p>
-                <p className="text-2xl font-bold text-blue-600">
-                  {new Date().toLocaleTimeString("id-ID")}
-                </p>
+      <div className="relative z-10 px-3 py-3 sm:px-5 lg:px-6">
+        <div className="mx-auto flex min-h-[calc(100vh-1.5rem)] max-w-[1380px] items-stretch gap-4">
+          <Sidebar
+            title="Sistem Absensi"
+            subtitle="Dashboard Mahasiswa"
+            user={user || { nama: "Mahasiswa", role: "mahasiswa" }}
+            menuItems={menuItems}
+            activeMenu={activeTab}
+            onMenuClick={setActiveTab}
+            onLogout={handleLogout}
+            collapsed={sidebarCollapsed}
+            onToggle={() => setSidebarCollapsed((prev) => !prev)}
+            mobileOpen={mobileSidebarOpen}
+            onCloseMobile={() => setMobileSidebarOpen(false)}
+          />
+
+          <main className="min-w-0 flex-1 space-y-4">
+            <div className="rounded-3xl border border-white/15 bg-white/10 px-3 py-2 shadow-2xl backdrop-blur-xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setMobileSidebarOpen(true)}
+                    className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-white transition hover:bg-white/15 xl:hidden"
+                  >
+                    <Menu className="h-5 w-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarCollapsed((prev) => !prev)}
+                    className="hidden h-10 w-10 items-center justify-center rounded-2xl border border-white/15 bg-white/10 text-white transition hover:bg-white/15 xl:flex"
+                    aria-label={sidebarCollapsed ? "Buka sidebar" : "Tutup sidebar"}
+                  >
+                    {sidebarCollapsed ? (
+                      <PanelLeftOpen className="h-5 w-5" />
+                    ) : (
+                      <PanelLeftClose className="h-5 w-5" />
+                    )}
+                  </button>
+                  <div className="ml-1 text-sm font-semibold text-white">
+                    {menuItems.find((m) => m.id === activeTab)?.label || "Dashboard"}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-2xl border border-white/15">
+                    <Clock className="w-4 h-4 text-blue-300" />
+                    <span className="text-sm font-mono text-white/90">{new Date().toLocaleTimeString("id-ID")}</span>
+                  </div>
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-2xl border border-white/15">
+                    <Users className="w-4 h-4 text-green-300" />
+                    <span className="text-sm capitalize text-white/90">{user?.kelompok}</span>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Kelompok */}
-          <div className="card">
-            <div className="flex items-center">
-              <Users className="w-8 h-8 text-green-600 mr-3" />
-              <div>
-                <p className="text-sm text-gray-600">Kelompok</p>
-                <p className="text-xl font-semibold capitalize">
-                  {user?.kelompok}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Tab Navigation */}
-        <div className="border-b border-gray-200 mb-6">
-          <div className="flex space-x-8">
-            {[
-              { key: "absensi", label: "Absensi", icon: CheckCircle },
-              { key: "logbook", label: "Logbook", icon: BookOpen },
-              { key: "izin", label: "Izin", icon: FileText },
-            ].map((tab) => {
-              const Icon = tab.icon;
-              return (
-                <button
-                  key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
-                  className={`py-4 px-1 border-b-2 font-medium transition flex items-center gap-2 ${
-                    activeTab === tab.key
-                      ? "border-blue-500 text-blue-600"
-                      : "border-transparent text-gray-500 hover:text-gray-700"
-                  }`}
-                >
-                  <Icon className="w-4 h-4" />
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+            <div className="rounded-3xl border border-white/15 bg-white/10 p-4 shadow-2xl backdrop-blur-xl max-h-[calc(100vh-6rem)] overflow-y-auto custom-scrollbar">
 
         {/* TAB: ABSENSI */}
         {activeTab === "absensi" && (
           <>
             {/* Absensi Card */}
-            <div className="card mb-6">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md mb-6">
               <h2 className="text-xl font-bold mb-4">Absensi Hari Ini</h2>
 
-          {/* DEBUG INFO */}
-          <div className="bg-yellow-50 border border-yellow-300 rounded-lg p-3 mb-4 text-xs font-mono">
-            <p className="font-bold mb-2 text-yellow-900">🔍 DEBUG INFO:</p>
-            <div className="grid grid-cols-2 gap-2 text-yellow-800">
-              <div>Jam: {new Date().toLocaleTimeString("id-ID")}</div>
-              <div>
-                Bisa Absen Pagi:{" "}
-                <span
-                  className={canAbsenPagi ? "text-green-600" : "text-red-600"}
-                >
-                  {canAbsenPagi ? "✅" : "❌"}
-                </span>
+              {/* DEBUG INFO */}
+              <div className="bg-yellow-50 border border-yellow-300 rounded-lg p-3 mb-4 text-xs font-mono">
+                <p className="font-bold mb-2 text-yellow-900">🔍 DEBUG INFO:</p>
+                <div className="grid grid-cols-2 gap-2 text-yellow-800">
+                  <div>Jam: {new Date().toLocaleTimeString("id-ID")}</div>
+                  <div>
+                    Bisa Absen Pagi:{" "}
+                    <span
+                      className={canAbsenPagi ? "text-green-600" : "text-red-600"}
+                    >
+                      {canAbsenPagi ? "✅" : "❌"}
+                    </span>
+                  </div>
+                  <div>
+                    Bisa Absen Sore:{" "}
+                    <span
+                      className={canAbsenSore ? "text-green-600" : "text-red-600"}
+                    >
+                      {canAbsenSore ? "✅" : "❌"}
+                    </span>
+                  </div>
+                  <div>
+                    Sudah Absen Pagi:{" "}
+                    <span
+                      className={
+                        hadiruTodayPagi ? "text-green-600" : "text-white/80"
+                      }
+                    >
+                      {hadiruTodayPagi ? "✅" : "❌"}
+                    </span>
+                  </div>
+                  <div>
+                    Sudah Absen Sore:{" "}
+                    <span
+                      className={
+                        hadirTodaySore ? "text-green-600" : "text-white/80"
+                      }
+                    >
+                      {hadirTodaySore ? "✅" : "❌"}
+                    </span>
+                  </div>
+                </div>
               </div>
-              <div>
-                Bisa Absen Sore:{" "}
-                <span
-                  className={canAbsenSore ? "text-green-600" : "text-red-600"}
-                >
-                  {canAbsenSore ? "✅" : "❌"}
-                </span>
-              </div>
-              <div>
-                Sudah Absen Pagi:{" "}
-                <span
-                  className={
-                    hadiruTodayPagi ? "text-green-600" : "text-gray-600"
+
+              {/* Buttons */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button
+                  onClick={() => handleAbsen("pagi")}
+                  disabled={!canAbsenPagi || hadiruTodayPagi || absenLoading}
+                  title={
+                    !canAbsenPagi
+                      ? "Diluar jam absen pagi"
+                      : hadiruTodayPagi
+                        ? "Sudah absen pagi"
+                        : ""
                   }
+                  className={`btn-primary flex items-center justify-center py-3 ${hadiruTodayPagi ? "opacity-50" : ""
+                    }`}
                 >
-                  {hadiruTodayPagi ? "✅" : "❌"}
-                </span>
-              </div>
-              <div>
-                Sudah Absen Sore:{" "}
-                <span
-                  className={
-                    hadirTodaySore ? "text-green-600" : "text-gray-600"
+                  {absenLoading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <>
+                      {hadiruTodayPagi ? (
+                        <CheckCircle className="w-5 h-5 mr-2 text-green-400" />
+                      ) : (
+                        <CheckCircle className="w-5 h-5 mr-2" />
+                      )}
+                      {hadiruTodayPagi ? "Sudah Absen Pagi" : "Absen Pagi"}
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={() => handleAbsen("sore")}
+                  disabled={
+                    !canAbsenSore ||
+                    !hadiruTodayPagi ||
+                    hadirTodaySore ||
+                    absenLoading
                   }
+                  title={
+                    !canAbsenSore
+                      ? "Diluar jam absen sore"
+                      : !hadiruTodayPagi
+                        ? "Harus absen pagi dulu"
+                        : hadirTodaySore
+                          ? "Sudah absen sore"
+                          : ""
+                  }
+                  className={`btn-primary flex items-center justify-center py-3 ${hadirTodaySore ? "opacity-50" : ""
+                    }`}
                 >
-                  {hadirTodaySore ? "✅" : "❌"}
-                </span>
+                  {absenLoading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <>
+                      {hadirTodaySore ? (
+                        <CheckCircle className="w-5 h-5 mr-2 text-green-400" />
+                      ) : (
+                        <CheckCircle className="w-5 h-5 mr-2" />
+                      )}
+                      {hadirTodaySore ? "Sudah Absen Sore" : "Absen Sore"}
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Tombol Izin */}
+              <button
+                onClick={() => setShowIzinModal(true)}
+                className="btn-secondary w-full flex items-center justify-center py-3 mt-4"
+              >
+                <FileText className="w-5 h-5 mr-2" />
+                Ajukan Izin
+              </button>
+
+              <p className="text-xs text-white/60 mt-4 text-center">
+                <AlertCircle className="w-4 h-4 inline mr-1" />
+                08.00-10.00 | 15.00-17.00
+              </p>
+            </div>
+
+            {/* Riwayat Absensi */}
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4">Riwayat Absensi</h2>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-white/5">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Tanggal
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Sesi
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Jam
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Status
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {history.length > 0 ? (
+                      history.map((item, idx) => (
+                        <tr key={idx}>
+                          <td className="px-6 py-4 text-sm">
+                            {new Date(item.tanggal).toLocaleDateString("id-ID")}
+                          </td>
+                          <td className="px-6 py-4 text-sm capitalize font-medium">
+                            {item.sesi}
+                          </td>
+                          <td className="px-6 py-4 text-sm">{item.jam_masuk}</td>
+                          <td className="px-6 py-4">
+                            <span
+                              className={
+                                item.status === "hadir"
+                                  ? "badge-green"
+                                  : item.status === "izin_approved"
+                                    ? "badge-yellow"
+                                    : "badge-red"
+                              }
+                            >
+                              {item.status.replace("_", " ")}
+                            </span>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td
+                          colSpan="4"
+                          className="px-6 py-4 text-center text-white/60"
+                        >
+                          Belum ada riwayat absensi
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
-          </div>
-
-          {/* Buttons */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <button
-              onClick={() => handleAbsen("pagi")}
-              disabled={!canAbsenPagi || hadiruTodayPagi || absenLoading}
-              title={
-                !canAbsenPagi
-                  ? "Diluar jam absen pagi"
-                  : hadiruTodayPagi
-                    ? "Sudah absen pagi"
-                    : ""
-              }
-              className={`btn-primary flex items-center justify-center py-3 ${
-                hadiruTodayPagi ? "opacity-50" : ""
-              }`}
-            >
-              {absenLoading ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <>
-                  {hadiruTodayPagi ? (
-                    <CheckCircle className="w-5 h-5 mr-2 text-green-400" />
-                  ) : (
-                    <CheckCircle className="w-5 h-5 mr-2" />
-                  )}
-                  {hadiruTodayPagi ? "Sudah Absen Pagi" : "Absen Pagi"}
-                </>
-              )}
-            </button>
-
-            <button
-              onClick={() => handleAbsen("sore")}
-              disabled={
-                !canAbsenSore ||
-                !hadiruTodayPagi ||
-                hadirTodaySore ||
-                absenLoading
-              }
-              title={
-                !canAbsenSore
-                  ? "Diluar jam absen sore"
-                  : !hadiruTodayPagi
-                    ? "Harus absen pagi dulu"
-                    : hadirTodaySore
-                      ? "Sudah absen sore"
-                      : ""
-              }
-              className={`btn-primary flex items-center justify-center py-3 ${
-                hadirTodaySore ? "opacity-50" : ""
-              }`}
-            >
-              {absenLoading ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <>
-                  {hadirTodaySore ? (
-                    <CheckCircle className="w-5 h-5 mr-2 text-green-400" />
-                  ) : (
-                    <CheckCircle className="w-5 h-5 mr-2" />
-                  )}
-                  {hadirTodaySore ? "Sudah Absen Sore" : "Absen Sore"}
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Tombol Izin */}
-          <button
-            onClick={() => setShowIzinModal(true)}
-            className="btn-secondary w-full flex items-center justify-center py-3 mt-4"
-          >
-            <FileText className="w-5 h-5 mr-2" />
-            Ajukan Izin
-          </button>
-
-          <p className="text-xs text-gray-500 mt-4 text-center">
-            <AlertCircle className="w-4 h-4 inline mr-1" />
-            08.00-10.00 | 15.00-17.00
-          </p>
-        </div>
-
-        {/* Riwayat Absensi */}
-        <div className="card">
-          <h2 className="text-xl font-bold mb-4">Riwayat Absensi</h2>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Tanggal
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Sesi
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Jam
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Status
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {history.length > 0 ? (
-                  history.map((item, idx) => (
-                    <tr key={idx}>
-                      <td className="px-6 py-4 text-sm">
-                        {new Date(item.tanggal).toLocaleDateString("id-ID")}
-                      </td>
-                      <td className="px-6 py-4 text-sm capitalize font-medium">
-                        {item.sesi}
-                      </td>
-                      <td className="px-6 py-4 text-sm">{item.jam_masuk}</td>
-                      <td className="px-6 py-4">
-                        <span
-                          className={
-                            item.status === "hadir"
-                              ? "badge-green"
-                              : item.status === "izin_approved"
-                                ? "badge-yellow"
-                                : "badge-red"
-                          }
-                        >
-                          {item.status.replace("_", " ")}
-                        </span>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td
-                      colSpan="4"
-                      className="px-6 py-4 text-center text-gray-500"
-                    >
-                      Belum ada riwayat absensi
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
           </>
         )}
 
@@ -808,7 +911,7 @@ const MahasiswaDashboard = () => {
         {activeTab === "logbook" && (
           <div className="space-y-6">
             {/* Form logbook hari ini */}
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-bold flex items-center gap-2">
                   <BookOpen className="w-5 h-5 text-blue-600" />
@@ -834,27 +937,27 @@ const MahasiswaDashboard = () => {
                   <p className="text-sm text-green-800 font-medium mb-2">
                     ✅ Logbook hari ini sudah di-submit
                   </p>
-                  <div className="space-y-2 text-sm text-gray-700">
+                  <div className="space-y-2 text-sm text-white/90">
                     <div>
-                      <span className="text-gray-500">Tanggal:</span>{" "}
+                      <span className="text-white/60">Tanggal:</span>{" "}
                       <strong>{logbookToday.tanggal}</strong>
                     </div>
                     <div>
-                      <span className="text-gray-500">Kegiatan:</span>
+                      <span className="text-white/60">Kegiatan:</span>
                       <p className="whitespace-pre-wrap mt-1">
                         {logbookToday.kegiatan}
                       </p>
                     </div>
                     {logbookToday.kendala && (
                       <div>
-                        <span className="text-gray-500">Kendala:</span>
+                        <span className="text-white/60">Kendala:</span>
                         <p className="whitespace-pre-wrap mt-1">
                           {logbookToday.kendala}
                         </p>
                       </div>
                     )}
                     {logbookToday.submitted_at && (
-                      <p className="text-xs text-gray-400 mt-2">
+                      <p className="text-xs text-white/50 mt-2">
                         Disubmit:{" "}
                         {new Date(logbookToday.submitted_at).toLocaleString(
                           "id-ID",
@@ -868,7 +971,7 @@ const MahasiswaDashboard = () => {
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-2">
                     <Calendar className="w-4 h-4 text-blue-600" />
                     <div className="text-sm">
-                      <span className="text-gray-600">Tanggal logbook:</span>{" "}
+                      <span className="text-white/80">Tanggal logbook:</span>{" "}
                       <strong className="text-blue-900">
                         {new Date(
                           logbookToday?.tanggal || todayString(),
@@ -879,17 +982,17 @@ const MahasiswaDashboard = () => {
                           day: "numeric",
                         })}
                       </strong>
-                      <span className="text-xs text-gray-500 ml-2">
+                      <span className="text-xs text-white/60 ml-2">
                         (lock ke hari ini, tidak bisa dipilih)
                       </span>
                     </div>
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                    <label className="block text-sm font-medium text-white/90 mb-1">
                       Kegiatan <span className="text-red-500">*</span>
                     </label>
                     <textarea
-                      className="input-field"
+                      className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                       rows="5"
                       placeholder="Tuliskan kegiatan yang Anda lakukan hari ini..."
                       value={logbookForm.kegiatan}
@@ -904,11 +1007,11 @@ const MahasiswaDashboard = () => {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Kendala <span className="text-gray-400">(opsional)</span>
+                    <label className="block text-sm font-medium text-white/90 mb-1">
+                      Kendala <span className="text-white/50">(opsional)</span>
                     </label>
                     <textarea
-                      className="input-field"
+                      className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                       rows="3"
                       placeholder="Kendala atau hambatan yang dialami (jika ada)..."
                       value={logbookForm.kendala}
@@ -950,10 +1053,10 @@ const MahasiswaDashboard = () => {
             </div>
 
             {/* Daftar Logbook */}
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <h2 className="text-xl font-bold mb-4">Riwayat Logbook</h2>
               {logbookList.length === 0 ? (
-                <p className="text-center text-gray-500 py-6">
+                <p className="text-center text-white/60 py-6">
                   Belum ada logbook. Buat logbook pertama Anda di atas.
                 </p>
               ) : (
@@ -961,15 +1064,14 @@ const MahasiswaDashboard = () => {
                   {logbookList.map((item) => (
                     <div
                       key={item.id}
-                      className={`p-4 border-l-4 rounded-lg ${
-                        item.status === "submitted"
+                      className={`p-4 border-l-4 rounded-lg ${item.status === "submitted"
                           ? "border-green-500 bg-green-50/30"
                           : "border-yellow-500 bg-yellow-50/30"
-                      }`}
+                        }`}
                     >
                       <div className="flex items-start justify-between gap-2 mb-2">
                         <div>
-                          <p className="text-xs text-gray-500">
+                          <p className="text-xs text-white/60">
                             {new Date(item.tanggal).toLocaleDateString(
                               "id-ID",
                               {
@@ -1022,11 +1124,11 @@ const MahasiswaDashboard = () => {
                           )}
                         </div>
                       </div>
-                      <p className="text-sm text-gray-700 whitespace-pre-wrap mb-2">
+                      <p className="text-sm text-white/90 whitespace-pre-wrap mb-2">
                         <strong>Kegiatan:</strong> {item.kegiatan}
                       </p>
                       {item.kendala && (
-                        <p className="text-sm text-gray-600 whitespace-pre-wrap">
+                        <p className="text-sm text-white/80 whitespace-pre-wrap">
                           <strong>Kendala:</strong> {item.kendala}
                         </p>
                       )}
@@ -1041,7 +1143,7 @@ const MahasiswaDashboard = () => {
         {/* TAB: IZIN */}
         {activeTab === "izin" && (
           <div className="space-y-6">
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <h2 className="text-xl font-bold mb-4">Ajukan Izin</h2>
               <button
                 onClick={() => setShowIzinModal(true)}
@@ -1053,87 +1155,371 @@ const MahasiswaDashboard = () => {
             </div>
 
             {/* Riwayat Izin */}
-            <div className="card">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <h2 className="text-xl font-bold mb-4">Riwayat Izin</h2>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Tanggal
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Keterangan
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Status
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Aksi
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {izinList.length > 0 ? (
-                  izinList.map((item) => (
-                    <tr key={item.id}>
-                      <td className="px-6 py-4 text-sm">
-                        {new Date(item.tanggal).toLocaleDateString("id-ID")}
-                      </td>
-                      <td className="px-6 py-4 text-sm">{item.keterangan}</td>
-                      <td className="px-6 py-4">
-                        {(() => {
-                          const status = (item.status_approval || "")
-                            .toLowerCase()
-                            .trim();
-                          const badgeClass =
-                            status === "approved"
-                              ? "badge-green"
-                              : status === "rejected"
-                                ? "badge-red"
-                                : status === "cancelled"
-                                  ? "badge-blue"
-                                  : "badge-yellow";
-                          const label =
-                            status === "approved"
-                              ? "Disetujui"
-                              : status === "rejected"
-                                ? "Ditolak"
-                                : status === "cancelled"
-                                  ? "Dibatalkan"
-                                  : "Pending";
-                          return <span className={badgeClass}>{label}</span>;
-                        })()}
-                      </td>
-                      <td className="px-6 py-4">
-                        {(item.status_approval === "pending" ||
-                          !item.status_approval) && (
-                          <button
-                            onClick={() => handleCancelIzin(item.id)}
-                            className="text-red-600 hover:text-red-800 text-sm font-medium"
-                          >
-                            Batalkan
-                          </button>
-                        )}
-                      </td>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-white/5">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Tanggal
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Keterangan
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Status
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Aksi
+                      </th>
                     </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td
-                      colSpan="4"
-                      className="px-6 py-4 text-center text-gray-500"
-                    >
-                      Belum ada riwayat izin
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {izinList.length > 0 ? (
+                      izinList.map((item) => (
+                        <tr key={item.id}>
+                          <td className="px-6 py-4 text-sm">
+                            {new Date(item.tanggal).toLocaleDateString("id-ID")}
+                          </td>
+                          <td className="px-6 py-4 text-sm">{item.keterangan}</td>
+                          <td className="px-6 py-4">
+                            {(() => {
+                              const status = (item.status_approval || "")
+                                .toLowerCase()
+                                .trim();
+                              const badgeClass =
+                                status === "approved"
+                                  ? "badge-green"
+                                  : status === "rejected"
+                                    ? "badge-red"
+                                    : status === "cancelled"
+                                      ? "badge-blue"
+                                      : "badge-yellow";
+                              const label =
+                                status === "approved"
+                                  ? "Disetujui"
+                                  : status === "rejected"
+                                    ? "Ditolak"
+                                    : status === "cancelled"
+                                      ? "Dibatalkan"
+                                      : "Pending";
+                              return <span className={badgeClass}>{label}</span>;
+                            })()}
+                          </td>
+                          <td className="px-6 py-4">
+                            {(item.status_approval === "pending" ||
+                              !item.status_approval) && (
+                                <button
+                                  onClick={() => handleCancelIzin(item.id)}
+                                  className="text-red-600 hover:text-red-800 text-sm font-medium"
+                                >
+                                  Batalkan
+                                </button>
+                              )}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td
+                          colSpan="4"
+                          className="px-6 py-4 text-center text-white/60"
+                        >
+                          Belum ada riwayat izin
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
+        {/* TAB: HOLIDAYS */}
+        {activeTab === "holidays" && (
+          <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+            <h2 className="text-xl font-bold mb-4 flex items-center">
+              <Calendar className="w-6 h-6 mr-2 text-red-600" />
+              Jadwal Libur Nasional / Tanggal Merah
+            </h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-white/5 border-y">
+                    <th className="px-6 py-4 text-sm font-semibold text-white/80">Tanggal</th>
+                    <th className="px-6 py-4 text-sm font-semibold text-white/80">Keterangan</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {holidays.length > 0 ? (
+                    holidays.map((holiday) => (
+                      <tr key={holiday.id} className="hover:bg-white/5">
+                        <td className="px-6 py-4 text-sm text-red-600 font-medium">
+                          {new Date(holiday.tanggal).toLocaleDateString("id-ID", {
+                            weekday: "long",
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric",
+                          })}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-800">{holiday.keterangan}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="2" className="px-6 py-8 text-center text-white/60">
+                        Belum ada tanggal merah yang dijadwalkan
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-sm text-white/60 mt-4">
+              * Pada tanggal merah yang tertera di atas, Anda tidak diwajibkan untuk melakukan absensi.
+            </p>
+          </div>
+        )}
+
+        {/* TAB: TUGAS AKHIR */}
+        {activeTab === "tugasAkhir" && (
+          <div className="space-y-6">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                <GraduationCap className="w-6 h-6 text-indigo-500" />
+                Pengajuan Judul Tugas Akhir
+              </h2>
+              <form onSubmit={handleSubmitTA} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-white/90 mb-1">Judul Tugas Akhir *</label>
+                  <input
+                    type="text"
+                    required
+                    value={taForm.judul}
+                    onChange={(e) => setTaForm({ ...taForm, judul: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="Masukkan judul tugas akhir"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-white/90 mb-1">Deskripsi Singkat</label>
+                  <textarea
+                    rows="3"
+                    value={taForm.deskripsi}
+                    onChange={(e) => setTaForm({ ...taForm, deskripsi: e.target.value })}
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    placeholder="Deskripsi singkat mengenai tugas akhir..."
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-white/90 mb-1">File Proposal (ZIP) *</label>
+                  <input
+                    type="file"
+                    required
+                    accept=".zip,application/zip,application/x-zip-compressed"
+                    onChange={(e) => setTaForm({ ...taForm, file: e.target.files[0] })}
+                    className="w-full text-sm text-white/60 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={taLoading}
+                  className="w-full bg-indigo-600 text-white rounded-lg px-4 py-2 font-medium hover:bg-indigo-700 disabled:opacity-50 flex items-center justify-center gap-2 transition-colors"
+                >
+                  {taLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
+                  Kirim Pengajuan
+                </button>
+              </form>
+            </div>
+
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                <FileCheck className="w-6 h-6 text-indigo-500" />
+                Riwayat Pengajuan
+              </h2>
+              {tugasAkhirList.length === 0 ? (
+                <p className="text-white/60 text-center py-4 border-2 border-dashed border-gray-200 rounded-lg">Belum ada riwayat pengajuan tugas akhir.</p>
+              ) : (
+                <div className="space-y-4">
+                  {tugasAkhirList.map((ta) => (
+                    <div key={ta.id} className="border border-gray-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow">
+                      <div className="flex justify-between items-start mb-3">
+                        <div>
+                          <h3 className="font-bold text-lg text-gray-800">{ta.judul}</h3>
+                          <p className="text-xs text-white/60 mt-1">Diajukan pada {new Date(ta.submitted_at || ta.created_at).toLocaleDateString('id-ID')}</p>
+                        </div>
+                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                          ta.status === 'pending' ? 'bg-yellow-100 text-yellow-800 border border-yellow-200' :
+                          ta.status === 'approved' ? 'bg-green-100 text-green-800 border border-green-200' :
+                          ta.status === 'revision' ? 'bg-blue-100 text-blue-800 border border-blue-200' :
+                          'bg-red-100 text-red-800 border border-red-200'
+                        }`}>
+                          {ta.status.toUpperCase()}
+                        </span>
+                      </div>
+                      <p className="text-sm text-white/80 mb-3">{ta.deskripsi}</p>
+                      
+                      <div className="bg-white/5 rounded-lg p-3 text-sm mb-3 border border-gray-100">
+                        <span className="font-semibold text-white/90">Catatan Mentor: </span>
+                        <span className="text-white/80">{ta.catatan_mentor || "-"}</span>
+                      </div>
+                      
+                      {ta.file_url && (
+                        <a href={`/uploads/${ta.file_url.split('uploads/')[1] || ta.file_url}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 text-indigo-600 hover:text-indigo-800 text-sm font-medium">
+                          <FileCheck className="w-4 h-4" /> Download Proposal
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB: PENILAIAN */}
+        {activeTab === "grades" && (
+          <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <Award className="w-6 h-6 text-indigo-500" />
+              Penilaian dari Mentor
+            </h2>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-white/5">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase tracking-wider">
+                      Indikator Penilaian
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase tracking-wider w-32">
+                      Bobot (%)
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase tracking-wider w-32">
+                      Nilai (0-100)
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {grades.length > 0 ? (
+                    grades.map((g, idx) => (
+                      <tr key={idx} className="hover:bg-white/5 transition">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-white">
+                          {g.nama_indikator}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-white/60">
+                          {g.bobot}%
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-semibold text-white">
+                          {g.nilai}
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan="3" className="px-6 py-8 text-center text-white/60">
+                        Belum ada nilai yang diberikan oleh mentor.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+                {grades.length > 0 && (
+                  <tfoot className="bg-indigo-50 font-bold">
+                    <tr>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-indigo-900" colSpan="2">
+                        Total Nilai (Tertimbang):
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-indigo-900">
+                        {(() => {
+                          let total = 0;
+                          let totalBobot = 0;
+                          grades.forEach(g => {
+                            total += (parseFloat(g.nilai) || 0) * ((parseFloat(g.bobot) || 0) / 100);
+                            totalBobot += (parseFloat(g.bobot) || 0);
+                          });
+                          if (totalBobot > 0) {
+                            total = (total / totalBobot) * 100;
+                          }
+                          return total.toFixed(2);
+                        })()}
+                      </td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+            <p className="text-sm text-white/60 mt-4">
+              * Total nilai dihitung berdasarkan bobot masing-masing indikator.
+            </p>
+          </div>
+        )}
+        {/* TAB: SERTIFIKAT */}
+        {activeTab === "certificates" && (
+          <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <Medal className="w-6 h-6 text-yellow-500" />
+              Sertifikat PKL
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {certificates.length > 0 ? (
+                certificates.map((cert, idx) => (
+                  <div key={idx} className="border border-yellow-200 bg-yellow-50 rounded-lg p-5 flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-start mb-2">
+                        <h3 className="font-bold text-lg text-yellow-800">{cert.judul}</h3>
+                        <span className="bg-yellow-200 text-yellow-800 text-xs px-2 py-1 rounded font-mono">
+                          {cert.nomor_sertifikat}
+                        </span>
+                      </div>
+                      <p className="text-sm text-yellow-700 mb-4">
+                        Diberikan atas penyelesaian Praktik Kerja Lapangan.
+                      </p>
+                      <div className="text-sm text-yellow-800 mb-1">
+                        <strong>Periode:</strong> {cert.periode_mulai ? new Date(cert.periode_mulai).toLocaleDateString('id-ID') : '-'} s/d {cert.periode_selesai ? new Date(cert.periode_selesai).toLocaleDateString('id-ID') : '-'}
+                      </div>
+                      <div className="text-sm text-yellow-800">
+                        <strong>Catatan:</strong> {cert.catatan || '-'}
+                      </div>
+                    </div>
+                    <div className="mt-4 pt-4 border-t border-yellow-200 flex justify-between items-center">
+                      <span className="text-xs text-yellow-600">Terbit: {cert.tanggal_terbit ? new Date(cert.tanggal_terbit).toLocaleDateString('id-ID') : '-'}</span>
+                      <div className="flex gap-2 items-center">
+                        {cert.file_url ? (
+                          <a
+                            href={`/uploads/${cert.file_url}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="w-8 h-8 rounded-full bg-yellow-500/20 text-yellow-600 flex items-center justify-center hover:bg-yellow-500 hover:text-white transition-colors"
+                            title="Download PDF"
+                          >
+                            <Download className="w-4 h-4" />
+                          </a>
+                        ) : (
+                          <button
+                            onClick={() => alert('File sertifikat belum tersedia.')}
+                            className="w-8 h-8 rounded-full bg-white/15 text-white/60 flex items-center justify-center"
+                            title="File tidak tersedia"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
+                        )}
+                        <Medal className="w-8 h-8 text-yellow-400 opacity-50" />
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="col-span-2 py-8 text-center text-white/60 border-2 border-dashed border-gray-200 rounded-lg">
+                  <Medal className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                  Belum ada sertifikat yang diterbitkan oleh mentor untuk Anda.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+            </div>
+          </main>
+        </div>
       </div>
 
       {/* Modal Izin */}
@@ -1144,7 +1530,7 @@ const MahasiswaDashboard = () => {
               <h3 className="text-xl font-bold">Ajukan Izin</h3>
               <button
                 onClick={() => setShowIzinModal(false)}
-                className="text-gray-400 hover:text-gray-600"
+                className="text-white/50 hover:text-white/80"
               >
                 <X className="w-6 h-6" />
               </button>
@@ -1159,7 +1545,7 @@ const MahasiswaDashboard = () => {
               </div>
 
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-white/90 mb-2">
                   Keterangan Izin
                 </label>
                 <textarea
@@ -1167,7 +1553,7 @@ const MahasiswaDashboard = () => {
                   onChange={(e) =>
                     setIzinData({ ...izinData, keterangan: e.target.value })
                   }
-                  className="input-field"
+                  className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
                   rows="4"
                   placeholder="Alasan izin (sakit, keperluan keluarga, dll.)"
                   required

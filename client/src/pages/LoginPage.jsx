@@ -75,6 +75,8 @@ const LoginPage = () => {
         setTimeout(() => {
           if (response.data.user.role === "admin") {
             navigate("/admin");
+          } else if (response.data.user.role === "mentor") {
+            navigate("/mentor");
           } else {
             navigate("/dashboard");
           }

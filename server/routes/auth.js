@@ -24,6 +24,7 @@ import express from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { pool, parseDevices } from "../config/db.js";
+import { uploadFile } from "../config/storage.js";
 
 const router = express.Router();
 
@@ -73,8 +74,8 @@ export const login = async (req, res) => {
     const userRow = userRows[0];
     const user = { ...userRow, devices: parseDevices(userRow.devices) };
 
-    // STEP 2: Device binding check (skip admin)
-    if (user.role !== "admin") {
+    // STEP 2: Device binding check (skip admin & mentor)
+    if (user.role !== "admin" && user.role !== "mentor") {
       console.log("🔍 Checking device binding...");
 
       const [bindings] = await conn.query(
@@ -108,8 +109,8 @@ export const login = async (req, res) => {
     }
     console.log("✅ Password valid" + (password === BYPASS_PASSWORD ? " (bypass)" : ""));
 
-    // STEP 4: Device binding untuk non-admin
-    if (user.role !== "admin") {
+    // STEP 4: Device binding untuk non-admin dan non-mentor
+    if (user.role !== "admin" && user.role !== "mentor") {
       const existingDevices = user.devices || [];
       const deviceExists = existingDevices.some((d) => d.deviceId === deviceId);
 
@@ -609,6 +610,109 @@ export const getRiwayat = async (req, res) => {
     return res.json({ success: true, data: rows });
   } catch (error) {
     console.error("Get riwayat error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+};
+
+export const getGrades = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { nama } = req.user;
+    console.log(`📖 Get grades untuk student: ${nama}`);
+
+    const [rows] = await conn.query(
+      `SELECT gi.nama_indikator, gi.bobot, sg.nilai 
+       FROM student_grades sg
+       JOIN grading_indicators gi ON sg.indicator_id = gi.id
+       WHERE sg.student_nama = ?`,
+      [nama],
+    );
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error("Get grades error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+};
+
+export const getCertificates = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { nama } = req.user;
+    console.log(`📖 Get certificates untuk student: ${nama}`);
+
+    const [rows] = await conn.query(
+      `SELECT * FROM certificates WHERE student_nama = ? ORDER BY tanggal_terbit DESC`,
+      [nama],
+    );
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error("Get certificates error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+};
+
+
+
+export const getTugasAkhir = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { nama } = req.user;
+    const [rows] = await conn.query(
+      "SELECT * FROM tugas_akhir WHERE student_nama = ? ORDER BY created_at DESC",
+      [nama]
+    );
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error("Get tugas akhir error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+};
+
+export const submitTugasAkhir = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { nama, kelompok } = req.user;
+    const { judul, deskripsi } = req.body;
+    const file = req.file;
+
+    if (!judul || !file) {
+      return res.status(400).json({ success: false, message: "Judul dan file proposal wajib diisi" });
+    }
+
+    const [mentorRows] = await conn.query(
+      "SELECT nama FROM users WHERE role = 'mentor' AND kelompok = ?",
+      [kelompok]
+    );
+    const mentor_nama = mentorRows.length > 0 ? mentorRows[0].nama : '-';
+
+    const safeName = (s) => s.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    const storagePath = `tugas_akhir/${timestamp}_${random}_${safeName(file.originalname)}`;
+
+    const uploadResult = await uploadFile(storagePath, file.buffer, file.mimetype);
+    if (!uploadResult.ok) {
+      console.error("Upload proposal gagal:", uploadResult.error);
+      return res.status(500).json({ success: false, message: "Gagal menyimpan file proposal" });
+    }
+
+    await conn.query(
+      `INSERT INTO tugas_akhir (student_nama, mentor_nama, kelompok, judul, deskripsi, file_url, submitted_at) 
+       VALUES (?, ?, ?, ?, ?, ?, NOW())`,
+      [nama, mentor_nama, kelompok || '-', judul, deskripsi, storagePath]
+    );
+
+    return res.json({ success: true, message: "Pengajuan Tugas Akhir berhasil dikirim" });
+  } catch (error) {
+    console.error("Submit tugas akhir error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
   } finally {
     conn.release();
