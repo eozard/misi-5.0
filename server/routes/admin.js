@@ -535,7 +535,7 @@ export const addHoliday = async (req, res) => {
     if (!tanggal || !keterangan) {
       return res.status(400).json({ success: false, message: "Tanggal dan Keterangan wajib diisi" });
     }
-    
+
     // Validasi apakah tanggal sudah ada
     const [exist] = await conn.query("SELECT id FROM holidays WHERE tanggal = ?", [tanggal]);
     if (exist.length > 0) {
@@ -567,7 +567,7 @@ export const deleteHoliday = async (req, res) => {
   try {
     const { id } = req.params;
     const [result] = await conn.query("DELETE FROM holidays WHERE id = ?", [id]);
-    
+
     if (result.affectedRows === 0) {
       return res.status(404).json({ success: false, message: "Tanggal libur tidak ditemukan" });
     }
@@ -576,6 +576,98 @@ export const deleteHoliday = async (req, res) => {
     return res.json({ success: true, message: "Tanggal libur berhasil dihapus" });
   } catch (error) {
     console.error("Delete holiday error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+};
+
+/*
+ * DELETE /api/admin/attendance/:id - Hapus record absensi
+ */
+export const deleteAttendance = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { id } = req.params;
+    const [result] = await conn.query("DELETE FROM attendances WHERE id = ?", [id]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Absensi tidak ditemukan" });
+    }
+    console.log(`✅ Absensi dihapus: id ${id}`);
+    return res.json({ success: true, message: "Data absensi berhasil dihapus" });
+  } catch (error) {
+    console.error("Delete attendance error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+};
+
+/*
+ * PUT /api/admin/attendance/:id - Update status/jam absensi
+ */
+export const updateAttendance = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { id } = req.params;
+    const { status, jam_masuk, keterangan } = req.body;
+    if (!status) {
+      return res.status(400).json({ success: false, message: "Status diperlukan" });
+    }
+    const [result] = await conn.query(
+      "UPDATE attendances SET status = ?, jam_masuk = ?, keterangan = ? WHERE id = ?",
+      [status, jam_masuk || null, keterangan || null, id]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "Absensi tidak ditemukan" });
+    }
+    console.log(`✅ Absensi diupdate: id ${id} -> ${status}`);
+    return res.json({ success: true, message: "Data absensi berhasil diupdate" });
+  } catch (error) {
+    console.error("Update attendance error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+};
+
+/*
+ * GET /api/admin/settings
+ */
+export const getSettings = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const [rows] = await conn.query("SELECT * FROM settings");
+    const settings = {};
+    rows.forEach(row => {
+      settings[row.setting_key] = row.setting_value;
+    });
+    return res.json({ success: true, data: settings });
+  } catch (error) {
+    console.error("Get settings error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+};
+
+/*
+ * PUT /api/admin/settings
+ */
+export const updateSettings = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { pagi_start, pagi_end, sore_start, sore_end } = req.body;
+    
+    await conn.query("UPDATE settings SET setting_value = ? WHERE setting_key = 'pagi_start'", [pagi_start]);
+    await conn.query("UPDATE settings SET setting_value = ? WHERE setting_key = 'pagi_end'", [pagi_end]);
+    await conn.query("UPDATE settings SET setting_value = ? WHERE setting_key = 'sore_start'", [sore_start]);
+    await conn.query("UPDATE settings SET setting_value = ? WHERE setting_key = 'sore_end'", [sore_end]);
+
+    console.log("✅ Pengaturan jam absensi diupdate");
+    return res.json({ success: true, message: "Pengaturan berhasil disimpan" });
+  } catch (error) {
+    console.error("Update settings error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
   } finally {
     conn.release();

@@ -24,6 +24,8 @@ import {
   GraduationCap,
   FileCheck,
 } from "lucide-react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import axiosInstance from "../utils/axios";
 import ToastStack from "../components/Toast";
 import Sidebar from "../components/Sidebar";
@@ -64,6 +66,7 @@ const MahasiswaDashboard = () => {
   const [editingLogbookId, setEditingLogbookId] = useState(null);
   // State tanggal merah
   const [holidays, setHolidays] = useState([]);
+  const [todayHoliday, setTodayHoliday] = useState(null);
   // State Penilaian
   const [grades, setGrades] = useState([]);
   // State Sertifikat
@@ -154,9 +157,15 @@ const MahasiswaDashboard = () => {
       const soreStart = 15 * 60;
       const soreEnd = 17 * 60;
 
-      // DEVELOPMENT: Untuk test/trial and error, gunakan env Vite untuk unlock tombol
-      // Backend tetap akan validate dengan BYPASS_TIME_CHECK=true
-      if (bypassPagiOnly) {
+      // Check if today is a holiday
+      const currentToday = todayString();
+      const isHoliday = holidays.find((h) => h.tanggal && h.tanggal.startsWith(currentToday));
+      setTodayHoliday(isHoliday || null);
+
+      if (isHoliday) {
+        setCanAbsenPagi(false);
+        setCanAbsenSore(false);
+      } else if (bypassPagiOnly) {
         // Mode bypass pagi-only: hanya allow absen pagi
         setCanAbsenPagi(true);
         setCanAbsenSore(false);
@@ -181,7 +190,7 @@ const MahasiswaDashboard = () => {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [holidays, bypassMode, bypassPagiOnly]);
 
   // Ambil riwayat absensi user
   const fetchRiwayat = async () => {
@@ -218,6 +227,35 @@ const MahasiswaDashboard = () => {
     } catch (error) {
       console.error("Fetch grades error:", error);
     }
+  };
+
+  const exportGradesPDF = () => {
+    const doc = new jsPDF();
+    doc.text(`Laporan Penilaian - ${user?.nama || 'Mahasiswa'}`, 14, 15);
+
+    const head = [["Indikator Penilaian", "Bobot", "Nilai (0-100)"]];
+    const body = grades.map(g => [g.nama_indikator, `${g.bobot}%`, g.nilai]);
+    
+    let total = 0;
+    let totalBobot = 0;
+    grades.forEach(g => {
+      total += (parseFloat(g.nilai) || 0) * ((parseFloat(g.bobot) || 0) / 100);
+      totalBobot += (parseFloat(g.bobot) || 0);
+    });
+    if (totalBobot > 0) {
+      total = (total / totalBobot) * 100;
+    }
+    body.push(["Total Nilai (Tertimbang)", "", total.toFixed(2)]);
+
+    autoTable(doc, {
+      startY: 25,
+      head: head,
+      body: body,
+      theme: 'grid',
+      headStyles: { fillColor: [76, 29, 149] }
+    });
+
+    doc.save(`Penilaian_${user?.nama || 'Mahasiswa'}.pdf`);
   };
 
   const fetchCertificates = async () => {
@@ -764,19 +802,32 @@ const MahasiswaDashboard = () => {
                 </div>
               </div>
 
+              {/* Holiday Info */}
+              {todayHoliday && (
+                <div className="bg-red-50 border border-red-300 rounded-lg p-4 mb-4 flex items-center gap-3">
+                  <Calendar className="w-8 h-8 text-red-500" />
+                  <div>
+                    <p className="font-bold text-red-900">Hari Libur</p>
+                    <p className="text-red-800 text-sm">{todayHoliday.keterangan}</p>
+                  </div>
+                </div>
+              )}
+
               {/* Buttons */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <button
                   onClick={() => handleAbsen("pagi")}
-                  disabled={!canAbsenPagi || hadiruTodayPagi || absenLoading}
+                  disabled={!canAbsenPagi || hadiruTodayPagi || absenLoading || !!todayHoliday}
                   title={
-                    !canAbsenPagi
+                    todayHoliday
+                      ? "Hari ini libur"
+                      : !canAbsenPagi
                       ? "Diluar jam absen pagi"
                       : hadiruTodayPagi
                         ? "Sudah absen pagi"
                         : ""
                   }
-                  className={`btn-primary flex items-center justify-center py-3 ${hadiruTodayPagi ? "opacity-50" : ""
+                  className={`btn-primary flex items-center justify-center py-3 ${hadiruTodayPagi || todayHoliday ? "opacity-50" : ""
                     }`}
                 >
                   {absenLoading ? (
@@ -799,10 +850,13 @@ const MahasiswaDashboard = () => {
                     !canAbsenSore ||
                     !hadiruTodayPagi ||
                     hadirTodaySore ||
-                    absenLoading
+                    absenLoading ||
+                    !!todayHoliday
                   }
                   title={
-                    !canAbsenSore
+                    todayHoliday
+                      ? "Hari ini libur"
+                      : !canAbsenSore
                       ? "Diluar jam absen sore"
                       : !hadiruTodayPagi
                         ? "Harus absen pagi dulu"
@@ -1381,10 +1435,21 @@ const MahasiswaDashboard = () => {
         {/* TAB: PENILAIAN */}
         {activeTab === "grades" && (
           <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-              <Award className="w-6 h-6 text-indigo-500" />
-              Penilaian dari Mentor
-            </h2>
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 gap-3">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <Award className="w-6 h-6 text-indigo-500" />
+                Penilaian dari Mentor
+              </h2>
+              {grades.length > 0 && (
+                <button 
+                  onClick={exportGradesPDF} 
+                  className="bg-indigo-600/80 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-2 self-start sm:self-auto"
+                >
+                  <Download className="w-4 h-4" />
+                  Download PDF
+                </button>
+              )}
+            </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-white/5">
@@ -1400,7 +1465,7 @@ const MahasiswaDashboard = () => {
                     </th>
                   </tr>
                 </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
+                <tbody className="divide-y divide-white/10">
                   {grades.length > 0 ? (
                     grades.map((g, idx) => (
                       <tr key={idx} className="hover:bg-white/5 transition">
@@ -1424,12 +1489,12 @@ const MahasiswaDashboard = () => {
                   )}
                 </tbody>
                 {grades.length > 0 && (
-                  <tfoot className="bg-indigo-50 font-bold">
+                  <tfoot className="bg-white/5 font-bold">
                     <tr>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-indigo-900" colSpan="2">
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-white" colSpan="2">
                         Total Nilai (Tertimbang):
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-indigo-900">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
                         {(() => {
                           let total = 0;
                           let totalBobot = 0;
@@ -1524,27 +1589,27 @@ const MahasiswaDashboard = () => {
 
       {/* Modal Izin */}
       {showIzinModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
-            <div className="flex justify-between items-center p-6 border-b">
-              <h3 className="text-xl font-bold">Ajukan Izin</h3>
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-slate-800 border border-white/10 rounded-xl shadow-2xl max-w-md w-full">
+            <div className="flex justify-between items-center p-6 border-b border-white/10">
+              <h3 className="text-xl font-bold text-white">Ajukan Izin</h3>
               <button
                 onClick={() => setShowIzinModal(false)}
-                className="text-white/50 hover:text-white/80"
+                className="text-white/50 hover:text-white/80 transition-colors"
               >
                 <X className="w-6 h-6" />
               </button>
             </div>
 
             <form onSubmit={handleSubmitIzin} className="p-6">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
-                <p className="text-sm text-blue-800">
+              <div className="bg-blue-900/30 border border-blue-500/30 rounded-lg p-3 mb-4">
+                <p className="text-sm text-blue-200">
                   📅 Izin untuk hari ini:{" "}
-                  <strong>{new Date().toLocaleDateString("id-ID")}</strong>
+                  <strong className="text-blue-100">{new Date().toLocaleDateString("id-ID")}</strong>
                 </p>
               </div>
 
-              <div className="mb-4">
+              <div className="mb-5">
                 <label className="block text-sm font-medium text-white/90 mb-2">
                   Keterangan Izin
                 </label>
@@ -1553,7 +1618,7 @@ const MahasiswaDashboard = () => {
                   onChange={(e) =>
                     setIzinData({ ...izinData, keterangan: e.target.value })
                   }
-                  className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                  className="input-field w-full bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-blue-500 focus:ring-blue-500 rounded-lg p-3"
                   rows="4"
                   placeholder="Alasan izin (sakit, keperluan keluarga, dll.)"
                   required
@@ -1564,14 +1629,14 @@ const MahasiswaDashboard = () => {
                 <button
                   type="button"
                   onClick={() => setShowIzinModal(false)}
-                  className="btn-secondary flex-1"
+                  className="btn-secondary flex-1 py-2"
                   disabled={izinLoading}
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="btn-primary flex-1 flex items-center justify-center"
+                  className="btn-primary flex-1 flex items-center justify-center py-2"
                   disabled={izinLoading}
                 >
                   {izinLoading ? (

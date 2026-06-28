@@ -284,12 +284,39 @@ export const absen = async (req, res) => {
     const { hour, minute, date: today } = getJakartaDateTimeParts(loginDateTime);
     const timeInMinutes = hour * 60 + minute;
 
-    // STEP 3: Tentukan sesi
+    // STEP 2.5: Cek apakah hari ini libur
+    const [holidayRows] = await conn.query(
+      "SELECT keterangan FROM holidays WHERE tanggal = ? LIMIT 1",
+      [today]
+    );
+    if (holidayRows.length > 0) {
+      console.log(`❌ Absen ditolak: Hari Libur (${holidayRows[0].keterangan})`);
+      return res.status(403).json({
+        success: false,
+        message: `Hari ini libur: ${holidayRows[0].keterangan}`,
+      });
+    }
+
+    // STEP 3: Tentukan sesi dan validasi waktu dari settings
     let sesi;
-    const pagiStart = 8 * 60;
-    const pagiEnd = 10 * 60;
-    const soreStart = 15 * 60;
-    const soreEnd = 17 * 60;
+    
+    // Ambil settings dari database
+    const [settingRows] = await conn.query("SELECT setting_key, setting_value FROM settings");
+    const settings = {};
+    settingRows.forEach(row => {
+      settings[row.setting_key] = row.setting_value;
+    });
+
+    const parseTime = (timeStr) => {
+      if (!timeStr) return 0;
+      const [h, m] = timeStr.split(':').map(Number);
+      return h * 60 + m;
+    };
+
+    const pagiStart = parseTime(settings.pagi_start || "08:00");
+    const pagiEnd = parseTime(settings.pagi_end || "10:00");
+    const soreStart = parseTime(settings.sore_start || "15:00");
+    const soreEnd = parseTime(settings.sore_end || "17:00");
 
     if (process.env.BYPASS_PAGI_ONLY === "true") {
       console.log("⏰ Time check bypassed (pagi only)");
@@ -313,7 +340,7 @@ export const absen = async (req, res) => {
         return res.status(403).json({
           success: false,
           message:
-            "Waktu absensi tidak valid. Pagi: 08:00-10:00, Sore: 15:00-17:00",
+            `Waktu absensi tidak valid. Pagi: ${settings.pagi_start || "08:00"}-${settings.pagi_end || "10:00"}, Sore: ${settings.sore_start || "15:00"}-${settings.sore_end || "17:00"}`,
         });
       }
     }

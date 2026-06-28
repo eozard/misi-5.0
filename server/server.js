@@ -67,6 +67,10 @@ import {
   getHolidays,
   addHoliday,
   deleteHoliday,
+  deleteAttendance,
+  updateAttendance,
+  getSettings,
+  updateSettings,
 } from "./routes/admin.js";
 
 import pendaftaranRoutes from "./routes/pendaftaran.js";
@@ -229,9 +233,13 @@ app.delete("/api/admin/users/:id", verifyToken, isAdmin, deleteUser);
 app.get("/api/admin/report", verifyToken, isAdmin, getAttendanceReport);
 app.get("/api/admin/izin", verifyToken, isAdmin, getAllIzin);
 app.put("/api/admin/izin/:id", verifyToken, isAdmin, updateIzinStatus);
+app.put("/api/admin/attendance/:id", verifyToken, isAdmin, updateAttendance);
+app.delete("/api/admin/attendance/:id", verifyToken, isAdmin, deleteAttendance);
 app.get("/api/holidays", getHolidays); // Public route for holidays
 app.post("/api/admin/holidays", verifyToken, isAdmin, addHoliday);
 app.delete("/api/admin/holidays/:id", verifyToken, isAdmin, deleteHoliday);
+app.get("/api/admin/settings", verifyToken, isAdmin, getSettings);
+app.put("/api/admin/settings", verifyToken, isAdmin, updateSettings);
 
 // ============================================================================
 // SPA FALLBACK (harus di paling akhir)

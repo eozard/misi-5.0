@@ -236,6 +236,23 @@ CREATE TABLE certificates (
   KEY idx_certificates_kelompok (kelompok)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- ============================================================================
+-- TABLE: settings
+-- Menyimpan pengaturan aplikasi (seperti jam absensi pagi dan sore)
+-- ============================================================================
+DROP TABLE IF EXISTS settings;
+CREATE TABLE settings (
+  setting_key VARCHAR(100) PRIMARY KEY,
+  setting_value VARCHAR(255) NOT NULL,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO settings (setting_key, setting_value) VALUES 
+('pagi_start', '08:00'),
+('pagi_end', '10:00'),
+('sore_start', '15:00'),
+('sore_end', '17:00');
+
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- ============================================================================
