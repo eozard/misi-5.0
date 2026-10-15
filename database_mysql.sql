@@ -236,23 +236,6 @@ CREATE TABLE certificates (
   KEY idx_certificates_kelompok (kelompok)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- ============================================================================
--- TABLE: settings
--- Menyimpan pengaturan aplikasi (seperti jam absensi pagi dan sore)
--- ============================================================================
-DROP TABLE IF EXISTS settings;
-CREATE TABLE settings (
-  setting_key VARCHAR(100) PRIMARY KEY,
-  setting_value VARCHAR(255) NOT NULL,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
-INSERT INTO settings (setting_key, setting_value) VALUES 
-('pagi_start', '08:00'),
-('pagi_end', '10:00'),
-('sore_start', '15:00'),
-('sore_end', '17:00');
-
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- ============================================================================
@@ -293,3 +276,43 @@ CREATE TABLE tugas_akhir (
   KEY idx_ta_kelompok (kelompok),
   KEY idx_ta_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ============================================================================
+-- TABLE: tugas_mingguan & tugas_mingguan_submissions
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS tugas_mingguan (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  mentor_nama VARCHAR(255) NOT NULL,
+  kelompok VARCHAR(100) NOT NULL,
+  minggu_ke INT NOT NULL,
+  judul VARCHAR(255) NOT NULL,
+  deskripsi TEXT NOT NULL,
+  file_attachment VARCHAR(500) DEFAULT NULL,
+  deadline DATETIME NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_tm_mentor (mentor_nama),
+  KEY idx_tm_kelompok (kelompok)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS tugas_mingguan_submissions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tugas_id INT NOT NULL,
+  student_nama VARCHAR(255) NOT NULL,
+  kelompok VARCHAR(100) NOT NULL,
+  catatan_mahasiswa TEXT DEFAULT NULL,
+  file_url VARCHAR(500) DEFAULT NULL,
+  link_url VARCHAR(500) DEFAULT NULL,
+  nilai DECIMAL(5,2) DEFAULT NULL,
+  status VARCHAR(50) NOT NULL DEFAULT 'submitted',
+  catatan_mentor TEXT DEFAULT NULL,
+  submitted_at DATETIME NOT NULL,
+  reviewed_at DATETIME DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_tugas_student (tugas_id, student_nama),
+  KEY idx_tms_tugas (tugas_id),
+  KEY idx_tms_student (student_nama),
+  CONSTRAINT fk_tms_tugas FOREIGN KEY (tugas_id) REFERENCES tugas_mingguan(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+

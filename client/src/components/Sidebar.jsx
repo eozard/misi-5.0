@@ -64,7 +64,9 @@ const Sidebar = ({
                 ? "Administrator"
                 : user?.role === "admin_pendaftaran"
                   ? "Admin Pendaftaran"
-                  : "Peserta PKL"}
+                  : user?.role === "mentor"
+                    ? "Mentor"
+                    : "Peserta PKL"}
             </p>
           </div>
         </div>

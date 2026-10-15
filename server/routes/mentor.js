@@ -321,7 +321,7 @@ router.put("/tugas-akhir/:id", async (req, res) => {
   try {
     const { id } = req.params;
     const { status, catatan_mentor } = req.body;
-    
+
     await conn.query(
       "UPDATE tugas_akhir SET status = ?, catatan_mentor = ?, reviewed_at = NOW() WHERE id = ?",
       [status, catatan_mentor, id]
@@ -335,4 +335,315 @@ router.put("/tugas-akhir/:id", async (req, res) => {
   }
 });
 
+/*
+ * ============================================================================
+ * DELETE /api/mentor/tugas-akhir/:id
+ * Mentor menghapus pengajuan tugas akhir dari mahasiswa
+ * ============================================================================
+ */
+router.delete("/tugas-akhir/:id", async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { id } = req.params;
+    const mentorNama = req.user.nama;
+
+    // Pastikan data TA ini memang milik kelompok mentor yang login
+    const [rows] = await conn.query(
+      "SELECT id, judul, student_nama FROM tugas_akhir WHERE id = ? AND mentor_nama = ? LIMIT 1",
+      [id, mentorNama]
+    );
+
+    if (rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "Pengajuan tidak ditemukan atau Anda tidak memiliki akses",
+      });
+    }
+
+    await conn.query("DELETE FROM tugas_akhir WHERE id = ?", [id]);
+
+    console.log(`🗑️ Tugas akhir id=${id} ("${rows[0].judul}" oleh ${rows[0].student_nama}) dihapus oleh mentor ${mentorNama}`);
+    res.json({ success: true, message: "Pengajuan tugas akhir berhasil dihapus" });
+  } catch (error) {
+    console.error("DELETE mentor/tugas-akhir error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+});
+
+/*
+ * ============================================================================
+ * TUGAS MINGGUAN (MENTOR)
+ * ============================================================================
+ */
+
+// Multer config for attachment file upload (PDF/DOCX/ZIP/IMAGE)
+const attachmentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+});
+
+/*
+ * GET /api/mentor/tugas-mingguan
+ * Ambil semua tugas mingguan yang dibuat oleh mentor beserta jumlah mahasiswa & yang sudah submit
+ */
+router.get("/tugas-mingguan", async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const nama = req.user.nama;
+    const kelompok = req.user.kelompok || "-";
+
+    const [tugasList] = await conn.query(
+      `SELECT tm.*, 
+        (SELECT COUNT(*) FROM users u WHERE u.role = 'mahasiswa' AND u.kelompok = tm.kelompok) AS total_mahasiswa,
+        (SELECT COUNT(*) FROM tugas_mingguan_submissions tms WHERE tms.tugas_id = tm.id) AS total_submitted,
+        (SELECT COUNT(*) FROM tugas_mingguan_submissions tms WHERE tms.tugas_id = tm.id AND tms.status = 'approved') AS total_approved,
+        (SELECT COUNT(*) FROM tugas_mingguan_submissions tms WHERE tms.tugas_id = tm.id AND tms.status = 'revision') AS total_revision
+       FROM tugas_mingguan tm 
+       WHERE tm.mentor_nama = ? AND tm.kelompok = ? 
+       ORDER BY tm.minggu_ke ASC, tm.created_at DESC`,
+      [nama, kelompok]
+    );
+
+    res.json({ success: true, data: tugasList });
+  } catch (error) {
+    console.error("GET mentor/tugas-mingguan error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+});
+
+/*
+ * POST /api/mentor/tugas-mingguan
+ * Buat tugas mingguan baru
+ */
+router.post("/tugas-mingguan", attachmentUpload.single("file"), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const nama = req.user.nama;
+    const kelompok = req.user.kelompok || "-";
+    const { minggu_ke, judul, deskripsi, deadline } = req.body;
+    const file = req.file;
+
+    if (!minggu_ke || !judul || !deskripsi || !deadline) {
+      return res.status(400).json({
+        success: false,
+        message: "Minggu ke, judul, deskripsi, dan deadline wajib diisi",
+      });
+    }
+
+    let file_attachment = null;
+    if (file) {
+      const safeName = (s) => s.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substring(2, 8);
+      const storagePath = `tugas_mingguan/attachments/${timestamp}_${random}_${safeName(file.originalname)}`;
+
+      const uploadResult = await uploadFile(storagePath, file.buffer, file.mimetype);
+      if (uploadResult.ok) {
+        file_attachment = storagePath;
+      } else {
+        console.error("Upload lampiran tugas mingguan gagal:", uploadResult.error);
+      }
+    }
+
+    const [result] = await conn.query(
+      `INSERT INTO tugas_mingguan 
+       (mentor_nama, kelompok, minggu_ke, judul, deskripsi, file_attachment, deadline) 
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [nama, kelompok, parseInt(minggu_ke, 10), judul, deskripsi, file_attachment, deadline]
+    );
+
+    res.json({
+      success: true,
+      message: "Tugas mingguan berhasil ditambahkan",
+      id: result.insertId,
+    });
+  } catch (error) {
+    console.error("POST mentor/tugas-mingguan error:", error);
+    res.status(500).json({ success: false, message: error.message || "Server error" });
+  } finally {
+    conn.release();
+  }
+});
+
+/*
+ * PUT /api/mentor/tugas-mingguan/:id
+ * Update tugas mingguan
+ */
+router.put("/tugas-mingguan/:id", attachmentUpload.single("file"), async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { id } = req.params;
+    const nama = req.user.nama;
+    const { minggu_ke, judul, deskripsi, deadline } = req.body;
+    const file = req.file;
+
+    const [existing] = await conn.query(
+      "SELECT * FROM tugas_mingguan WHERE id = ? AND mentor_nama = ? LIMIT 1",
+      [id, nama]
+    );
+
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, message: "Tugas mingguan tidak ditemukan" });
+    }
+
+    let file_attachment = existing[0].file_attachment;
+    if (file) {
+      const safeName = (s) => s.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substring(2, 8);
+      const storagePath = `tugas_mingguan/attachments/${timestamp}_${random}_${safeName(file.originalname)}`;
+
+      const uploadResult = await uploadFile(storagePath, file.buffer, file.mimetype);
+      if (uploadResult.ok) {
+        file_attachment = storagePath;
+      }
+    }
+
+    await conn.query(
+      `UPDATE tugas_mingguan 
+       SET minggu_ke = ?, judul = ?, deskripsi = ?, file_attachment = ?, deadline = ? 
+       WHERE id = ? AND mentor_nama = ?`,
+      [parseInt(minggu_ke, 10), judul, deskripsi, file_attachment, deadline, id, nama]
+    );
+
+    res.json({ success: true, message: "Tugas mingguan berhasil diperbarui" });
+  } catch (error) {
+    console.error("PUT mentor/tugas-mingguan error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+});
+
+/*
+ * DELETE /api/mentor/tugas-mingguan/:id
+ * Hapus tugas mingguan
+ */
+router.delete("/tugas-mingguan/:id", async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { id } = req.params;
+    const nama = req.user.nama;
+
+    const [existing] = await conn.query(
+      "SELECT id, file_attachment FROM tugas_mingguan WHERE id = ? AND mentor_nama = ? LIMIT 1",
+      [id, nama]
+    );
+
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, message: "Tugas mingguan tidak ditemukan" });
+    }
+
+    await conn.query("DELETE FROM tugas_mingguan WHERE id = ?", [id]);
+
+    res.json({ success: true, message: "Tugas mingguan berhasil dihapus" });
+  } catch (error) {
+    console.error("DELETE mentor/tugas-mingguan error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+});
+
+/*
+ * GET /api/mentor/tugas-mingguan/:id/submissions
+ * Lihat seluruh pengumpulan mahasiswa untuk 1 tugas mingguan
+ */
+router.get("/tugas-mingguan/:id/submissions", async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { id } = req.params;
+    const kelompok = req.user.kelompok || "-";
+
+    // Ambil detail tugas
+    const [tugasRows] = await conn.query(
+      "SELECT * FROM tugas_mingguan WHERE id = ? LIMIT 1",
+      [id]
+    );
+
+    if (tugasRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Tugas mingguan tidak ditemukan" });
+    }
+
+    // Ambil seluruh mahasiswa di kelompok mentor beserta status submission tugas ini (LEFT JOIN)
+    const [studentsWithSubmissions] = await conn.query(
+      `SELECT 
+        u.id AS student_id,
+        u.nama AS student_nama,
+        tms.id AS submission_id,
+        tms.tugas_id,
+        tms.catatan_mahasiswa,
+        tms.file_url,
+        tms.link_url,
+        tms.nilai,
+        tms.status AS submission_status,
+        tms.catatan_mentor,
+        tms.submitted_at,
+        tms.reviewed_at
+       FROM users u
+       LEFT JOIN tugas_mingguan_submissions tms 
+         ON u.nama = tms.student_nama AND tms.tugas_id = ?
+       WHERE u.role = 'mahasiswa' AND u.kelompok = ?
+       ORDER BY u.nama ASC`,
+      [id, kelompok]
+    );
+
+    res.json({
+      success: true,
+      tugas: tugasRows[0],
+      data: studentsWithSubmissions,
+    });
+  } catch (error) {
+    console.error("GET mentor/tugas-mingguan/:id/submissions error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+});
+
+/*
+ * PUT /api/mentor/tugas-mingguan/submissions/:id
+ * Mentor memberikan nilai, feedback, dan update status pengumpulan mahasiswa
+ */
+router.put("/tugas-mingguan/submissions/:id", async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { id } = req.params;
+    const { nilai, status, catatan_mentor } = req.body;
+
+    const [existing] = await conn.query(
+      "SELECT * FROM tugas_mingguan_submissions WHERE id = ? LIMIT 1",
+      [id]
+    );
+
+    if (existing.length === 0) {
+      return res.status(404).json({ success: false, message: "Data pengumpulan tidak ditemukan" });
+    }
+
+    await conn.query(
+      `UPDATE tugas_mingguan_submissions 
+       SET nilai = ?, status = ?, catatan_mentor = ?, reviewed_at = NOW() 
+       WHERE id = ?`,
+      [
+        nilai !== undefined && nilai !== "" && nilai !== null ? parseFloat(nilai) : null,
+        status || existing[0].status,
+        catatan_mentor !== undefined ? catatan_mentor : existing[0].catatan_mentor,
+        id,
+      ]
+    );
+
+    res.json({ success: true, message: "Penilaian tugas mingguan berhasil disimpan" });
+  } catch (error) {
+    console.error("PUT mentor/tugas-mingguan/submissions/:id error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+});
+
 export default router;
+

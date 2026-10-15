@@ -12,6 +12,7 @@ import PendaftaranPage from "./pages/PendaftaranPage";
 import AdminPendaftaranPage from "./pages/AdminPendaftaranPage";
 import MentorDashboard from "./pages/MentorDashboard";
 import ProtectedRoute from "./components/ProtectedRoute";
+import MentorLoginPage from "./pages/MentorLoginPage";
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
       <Routes>
         <Route path="/" element={<LandingPage />} />
         <Route path="/absen" element={<LoginPage />} />
+        <Route path="/mentor-login" element={<MentorLoginPage />} />
         <Route path="/pendaftaran" element={<PendaftaranPage />} />
         <Route path="/admin_pendaftaran" element={<AdminPendaftaranPage />} />
         <Route
@@ -40,7 +42,7 @@ function App() {
         <Route
           path="/mentor"
           element={
-            <ProtectedRoute allowedRoles={["mentor"]}>
+            <ProtectedRoute allowedRoles={["mentor"]} redirectTo="/mentor-login">
               <MentorDashboard />
             </ProtectedRoute>
           }

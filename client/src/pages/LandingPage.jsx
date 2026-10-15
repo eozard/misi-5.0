@@ -5,7 +5,7 @@
  */
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { UserPlus, LogIn, Building2, UserCog, ChevronRight } from "lucide-react";
+import { UserPlus, LogIn, Building2, UserCog, ChevronRight, GraduationCap } from "lucide-react";
 
 const LandingPage = () => {
   const navigate = useNavigate();
@@ -56,7 +56,7 @@ const LandingPage = () => {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {/* Daftar Button */}
             <button
               type="button"
@@ -91,6 +91,25 @@ const LandingPage = () => {
                 Login untuk absensi harian
               </span>
               <div className="mt-auto flex items-center text-blue-400 text-sm font-medium opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all">
+                Masuk Portal <ChevronRight className="w-4 h-4 ml-1" />
+              </div>
+            </button>
+
+            {/* Mentor Button */}
+            <button
+              type="button"
+              onClick={() => navigate("/mentor-login")}
+              className="group relative flex flex-col items-center justify-center p-8 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-amber-400/50 rounded-2xl transition-all duration-300 hover:shadow-xl hover:-translate-y-1 overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="w-16 h-16 bg-amber-500/20 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 group-hover:bg-amber-500 transition-all duration-300">
+                <GraduationCap className="w-8 h-8 text-amber-300 group-hover:text-white" />
+              </div>
+              <span className="text-xl font-bold text-white mb-2">Mentor</span>
+              <span className="text-sm text-blue-100/70 text-center mb-4">
+                Login khusus untuk Mentor
+              </span>
+              <div className="mt-auto flex items-center text-amber-400 text-sm font-medium opacity-0 group-hover:opacity-100 transform translate-y-2 group-hover:translate-y-0 transition-all">
                 Masuk Portal <ChevronRight className="w-4 h-4 ml-1" />
               </div>
             </button>

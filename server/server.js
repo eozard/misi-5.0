@@ -48,6 +48,8 @@ import {
   getCertificates,
   getTugasAkhir,
   submitTugasAkhir,
+  getTugasMingguan,
+  submitTugasMingguan,
 } from "./routes/auth.js";
 
 import {
@@ -68,9 +70,6 @@ import {
   addHoliday,
   deleteHoliday,
   deleteAttendance,
-  updateAttendance,
-  getSettings,
-  updateSettings,
 } from "./routes/admin.js";
 
 import pendaftaranRoutes from "./routes/pendaftaran.js";
@@ -188,9 +187,27 @@ app.delete("/api/izin/:id", verifyToken, isMahasiswa, cancelIzin);
 app.get("/api/grades", verifyToken, isMahasiswa, getGrades);
 app.get("/api/certificates", verifyToken, isMahasiswa, getCertificates);
 
-const taUpload = multer({ storage: multer.memoryStorage() });
+const taUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // Maks 10MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype === "application/pdf") {
+      cb(null, true);
+    } else {
+      cb(new Error("File proposal harus berformat PDF"), false);
+    }
+  },
+});
 app.get("/api/tugas-akhir", verifyToken, isMahasiswa, getTugasAkhir);
 app.post("/api/tugas-akhir", verifyToken, isMahasiswa, taUpload.single("file"), submitTugasAkhir);
+
+const tmUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 30 * 1024 * 1024 }, // Maks 30MB
+});
+app.get("/api/tugas-mingguan", verifyToken, isMahasiswa, getTugasMingguan);
+app.post("/api/tugas-mingguan/:id/submit", verifyToken, isMahasiswa, tmUpload.single("file"), submitTugasMingguan);
+
 
 // ============================================================================
 // MENTOR ROUTES
@@ -214,6 +231,12 @@ app.get(
   isAdmin,
   getStudentAttendance,
 );
+app.delete(
+  "/api/admin/attendance/:id",
+  verifyToken,
+  isAdmin,
+  deleteAttendance,
+);
 app.get("/api/admin/devices", verifyToken, isAdmin, getDevices);
 app.delete(
   "/api/admin/devices/:deviceId",
@@ -233,13 +256,9 @@ app.delete("/api/admin/users/:id", verifyToken, isAdmin, deleteUser);
 app.get("/api/admin/report", verifyToken, isAdmin, getAttendanceReport);
 app.get("/api/admin/izin", verifyToken, isAdmin, getAllIzin);
 app.put("/api/admin/izin/:id", verifyToken, isAdmin, updateIzinStatus);
-app.put("/api/admin/attendance/:id", verifyToken, isAdmin, updateAttendance);
-app.delete("/api/admin/attendance/:id", verifyToken, isAdmin, deleteAttendance);
 app.get("/api/holidays", getHolidays); // Public route for holidays
 app.post("/api/admin/holidays", verifyToken, isAdmin, addHoliday);
 app.delete("/api/admin/holidays/:id", verifyToken, isAdmin, deleteHoliday);
-app.get("/api/admin/settings", verifyToken, isAdmin, getSettings);
-app.put("/api/admin/settings", verifyToken, isAdmin, updateSettings);
 
 // ============================================================================
 // SPA FALLBACK (harus di paling akhir)

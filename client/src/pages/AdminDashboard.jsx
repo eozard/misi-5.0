@@ -103,8 +103,8 @@ const AdminDashboard = () => {
     reportFilters.kelompok === "all"
       ? students
       : students.filter(
-        (student) => student.kelompok === reportFilters.kelompok,
-      );
+          (student) => student.kelompok === reportFilters.kelompok,
+        );
   const studentRoleByName = Object.fromEntries(
     (students || []).map((student) => [student.nama, student.role]),
   );
@@ -164,44 +164,15 @@ const AdminDashboard = () => {
     return () => clearTimeout(timer);
   }, []);
 
-  // Auto-fetch saat tab report/izin/logbook/settings dibuka
+  // Auto-fetch saat tab report/izin dibuka
   useEffect(() => {
     if (activeTab === "report") {
       fetchReportData();
       fetchIzinData(); // Fetch izin data juga saat report dibuka
     } else if (activeTab === "logbook") {
       fetchLogbookData();
-    } else if (activeTab === "settings") {
-      fetchSettings();
     }
   }, [activeTab]);
-
-  const fetchSettings = async () => {
-    try {
-      const res = await axiosInstance.get("/admin/settings");
-      if (res.data.success) {
-        setSettings(prev => ({ ...prev, ...res.data.data }));
-      }
-    } catch (err) {
-      console.error("Fetch settings error:", err);
-    }
-  };
-
-  const handleSaveSettings = async (e) => {
-    e.preventDefault();
-    setSavingSettings(true);
-    try {
-      const res = await axiosInstance.put("/admin/settings", settings);
-      if (res.data.success) {
-        pushToast({ type: "success", title: "Berhasil", message: res.data.message });
-      }
-    } catch (err) {
-      console.error("Save settings error:", err);
-      pushToast({ type: "error", title: "Gagal", message: "Gagal menyimpan pengaturan" });
-    } finally {
-      setSavingSettings(false);
-    }
-  };
 
   const fetchLogbookData = async () => {
     setLogbookLoading(true);
@@ -575,57 +546,6 @@ const AdminDashboard = () => {
     }
   }
 
-  // Hapus record absensi
-  const handleDeleteAttendance = (item) => {
-    setConfirmState({
-      title: "Hapus Absensi?",
-      message: `Hapus absensi ${item.nama} (${item.sesi}) pada ${new Date(item.tanggal).toLocaleDateString("id-ID")}?`,
-      confirmText: "Hapus",
-      tone: "danger",
-      onConfirm: async () => {
-        try {
-          const res = await axiosInstance.delete(`/admin/attendance/${item.id}`);
-          if (res.data.success) {
-            pushToast({ type: "success", title: "Berhasil", message: res.data.message });
-            fetchReportData();
-          }
-        } catch (error) {
-          pushToast({ type: "error", title: "Gagal", message: error.response?.data?.message || "Terjadi kesalahan" });
-        }
-      },
-    });
-  };
-
-  // Edit status absensi
-  const handleEditAttendance = async (item) => {
-    const newStatus = window.prompt(
-      `Edit status absensi ${item.nama} (${item.sesi}).\nStatus saat ini: ${item.status}\n\nMasukkan status baru (hadir/alpa/izin):`,
-      item.status
-    );
-    if (!newStatus) return;
-    if (!["hadir", "alpa", "izin"].includes(newStatus.toLowerCase())) {
-      pushToast({ type: "warning", title: "Status Tidak Valid", message: "Status harus: hadir, alpa, atau izin" });
-      return;
-    }
-    const newJam = window.prompt(
-      "Masukkan jam masuk baru (format HH:mm:ss), atau tekan OK untuk tidak mengubah:",
-      item.jam_masuk || ""
-    );
-    try {
-      const res = await axiosInstance.put(`/admin/attendance/${item.id}`, {
-        status: newStatus.toLowerCase(),
-        jam_masuk: newJam || item.jam_masuk || null,
-        keterangan: item.keterangan || null,
-      });
-      if (res.data.success) {
-        pushToast({ type: "success", title: "Berhasil", message: res.data.message });
-        fetchReportData();
-      }
-    } catch (error) {
-      pushToast({ type: "error", title: "Gagal", message: error.response?.data?.message || "Terjadi kesalahan" });
-    }
-  };
-
   // Export laporan ke CSV
   const handleExportReport = () => {
     if (reportData.length === 0) {
@@ -668,6 +588,37 @@ const AdminDashboard = () => {
       type: "success",
       title: "Export siap",
       message: "File report berhasil dibuat",
+    });
+  };
+
+  // Hapus data absensi
+  const handleDeleteAttendance = (item) => {
+    setConfirmState({
+      title: "Hapus Absensi?",
+      message: `Data absensi ${item.nama} pada tanggal ${new Date(
+        item.tanggal,
+      ).toLocaleDateString("id-ID")} akan dihapus permanen.`,
+      confirmText: "Hapus",
+      tone: "danger",
+      onConfirm: async () => {
+        try {
+          const res = await axiosInstance.delete(`/admin/attendance/${item.id}`);
+          if (res.data.success) {
+            pushToast({
+              type: "success",
+              title: "Berhasil",
+              message: res.data.message,
+            });
+            fetchReportData();
+          }
+        } catch (error) {
+          pushToast({
+            type: "error",
+            title: "Gagal",
+            message: error.response?.data?.message || "Gagal menghapus data absensi",
+          });
+        }
+      },
     });
   };
 
@@ -716,28 +667,6 @@ const AdminDashboard = () => {
             title: "Gagal",
             message: msg,
           });
-        }
-      },
-    });
-  };
-
-  // Hapus data izin
-  const handleDeleteIzin = (item) => {
-    setConfirmState({
-      title: "Hapus Pengajuan Izin?",
-      message: `Hapus pengajuan izin atas nama ${item.nama} untuk tanggal ${new Date(item.tanggal).toLocaleDateString("id-ID")}? Data yang dihapus tidak dapat dikembalikan.`,
-      confirmText: "Hapus",
-      tone: "danger",
-      onConfirm: async () => {
-        try {
-          // Endpoint ini menghapus record di attendances table, yang mana izin adalah salah satunya
-          const res = await axiosInstance.delete(`/admin/attendance/${item.id}`);
-          if (res.data.success) {
-            pushToast({ type: "success", title: "Berhasil", message: "Data izin berhasil dihapus" });
-            fetchIzinData();
-          }
-        } catch (error) {
-          pushToast({ type: "error", title: "Gagal", message: error.response?.data?.message || "Terjadi kesalahan saat menghapus izin" });
         }
       },
     });
@@ -849,7 +778,7 @@ const AdminDashboard = () => {
           if (action) await action();
         }}
       />
-
+      
       <div className="absolute inset-0 bg-gradient-to-br from-blue-600 via-indigo-700 to-purple-800" />
       <div className="absolute inset-0 overflow-hidden">
         <div className="absolute -top-40 -right-40 h-96 w-96 rounded-full bg-white/10 blur-3xl" />
@@ -911,1030 +840,1148 @@ const AdminDashboard = () => {
             </div>
 
             <div className="rounded-3xl border border-white/15 bg-white/10 p-4 shadow-2xl backdrop-blur-xl max-h-[calc(100vh-6rem)] overflow-y-auto custom-scrollbar">
-              {/* Stats Tab */}
-              {activeTab === "stats" && stats && (
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-white/80">Total Mahasiswa</p>
-                        <p className="text-3xl font-bold">{stats.totalMahasiswa}</p>
-                      </div>
-                      <Users className="w-12 h-12 text-blue-600" />
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-white/80">Total Anak SMK</p>
-                        <p className="text-3xl font-bold">{stats.totalAnakSmk}</p>
-                      </div>
-                      <Users className="w-12 h-12 text-green-600" />
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-white/80">Hadir Hari Ini</p>
-                        <p className="text-3xl font-bold text-green-600">
-                          {stats.hadirToday}
-                        </p>
-                      </div>
-                      <CheckCircle className="w-12 h-12 text-green-600" />
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm text-white/80">Izin Hari Ini</p>
-                        <p className="text-3xl font-bold text-yellow-600">
-                          {stats.izinToday}
-                        </p>
-                      </div>
-                      <Calendar className="w-12 h-12 text-yellow-600" />
-                    </div>
-                  </div>
+        {/* Stats Tab */}
+        {activeTab === "stats" && stats && (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-white/80">Total Mahasiswa</p>
+                  <p className="text-3xl font-bold">{stats.totalMahasiswa}</p>
                 </div>
-              )}
+                <Users className="w-12 h-12 text-blue-600" />
+              </div>
+            </div>
 
-              {/* Logbook Tab */}
-              {activeTab === "logbook" && (
-                <div className="space-y-4">
-                  {/* Filter */}
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <h2 className="text-xl font-bold mb-4">🔍 Filter Logbook</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
-                      <div>
-                        <label className="block text-sm font-medium mb-1">Status</label>
-                        <select
-                          className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                          value={logbookFilter.status}
-                          onChange={(e) =>
-                            setLogbookFilter({
-                              ...logbookFilter,
-                              status: e.target.value,
-                            })
-                          }
-                        >
-                          <option value="all">Semua</option>
-                          <option value="draft">Draft</option>
-                          <option value="submitted">Submitted</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium mb-1">Nama</label>
-                        <input
-                          type="text"
-                          className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                          placeholder="Cari nama..."
-                          value={logbookFilter.nama}
-                          onChange={(e) =>
-                            setLogbookFilter({
-                              ...logbookFilter,
-                              nama: e.target.value,
-                            })
-                          }
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium mb-1">
-                          Dari Tanggal
-                        </label>
-                        <input
-                          type="date"
-                          className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                          value={logbookFilter.fromDate}
-                          onChange={(e) =>
-                            setLogbookFilter({
-                              ...logbookFilter,
-                              fromDate: e.target.value,
-                            })
-                          }
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium mb-1">
-                          Sampai Tanggal
-                        </label>
-                        <input
-                          type="date"
-                          className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                          value={logbookFilter.toDate}
-                          onChange={(e) =>
-                            setLogbookFilter({
-                              ...logbookFilter,
-                              toDate: e.target.value,
-                            })
-                          }
-                        />
-                      </div>
-                      <button
-                        onClick={fetchLogbookData}
-                        disabled={logbookLoading}
-                        className="btn-primary flex items-center justify-center"
-                      >
-                        {logbookLoading ? (
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        ) : (
-                          "Filter"
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* List Logbook */}
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-xl font-bold">
-                        📓 Daftar Logbook ({logbookList.length})
-                      </h2>
-                    </div>
-
-                    {logbookLoading ? (
-                      <div className="text-center py-8">
-                        <Loader2 className="w-6 h-6 animate-spin mx-auto text-blue-600" />
-                      </div>
-                    ) : logbookList.length === 0 ? (
-                      <p className="text-center text-white/60 py-6">
-                        Belum ada logbook
-                      </p>
-                    ) : (
-                      <div className="space-y-3">
-                        {logbookList.map((item) => (
-                          <div
-                            key={item.id}
-                            className={`p-4 border rounded-lg ${item.status === "submitted"
-                                ? "border-green-200 bg-green-50/30"
-                                : "border-yellow-200 bg-yellow-50/30"
-                              }`}
-                          >
-                            <div className="flex items-start justify-between gap-3 mb-2">
-                              <div>
-                                <p className="font-semibold text-white">
-                                  {item.nama}
-                                </p>
-                                <p className="text-xs text-white/60">
-                                  {item.kelompok && (
-                                    <span className="capitalize mr-2">
-                                      {item.kelompok}
-                                    </span>
-                                  )}
-                                  {new Date(item.tanggal).toLocaleDateString(
-                                    "id-ID",
-                                    {
-                                      weekday: "long",
-                                      year: "numeric",
-                                      month: "long",
-                                      day: "numeric",
-                                    },
-                                  )}
-                                </p>
-                                <span
-                                  className={
-                                    item.status === "submitted"
-                                      ? "badge-green mt-1 inline-block"
-                                      : "badge-yellow mt-1 inline-block"
-                                  }
-                                >
-                                  {item.status === "submitted"
-                                    ? "Submitted"
-                                    : "Draft"}
-                                </span>
-                              </div>
-                              <div className="flex flex-col gap-1">
-                                {item.status === "submitted" && (
-                                  <button
-                                    onClick={() => handleResetLogbook(item)}
-                                    className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 border border-blue-200 rounded"
-                                    title="Buka kembali untuk diedit"
-                                  >
-                                    Reset ke Draft
-                                  </button>
-                                )}
-                                <button
-                                  onClick={() => handleDeleteLogbookAdmin(item)}
-                                  className="text-xs text-red-600 hover:text-red-800 px-2 py-1 border border-red-200 rounded flex items-center justify-center gap-1"
-                                >
-                                  <Trash2 className="w-3 h-3" />
-                                  Hapus
-                                </button>
-                              </div>
-                            </div>
-                            <p className="text-sm text-white/90 whitespace-pre-wrap mb-1">
-                              <strong>Kegiatan:</strong> {item.kegiatan}
-                            </p>
-                            {item.kendala && (
-                              <p className="text-sm text-white/80 whitespace-pre-wrap">
-                                <strong>Kendala:</strong> {item.kendala}
-                              </p>
-                            )}
-                            {item.submitted_at && (
-                              <p className="text-xs text-white/50 mt-2">
-                                Disubmit:{" "}
-                                {new Date(item.submitted_at).toLocaleString("id-ID")}
-                              </p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-white/80">Total Anak SMK</p>
+                  <p className="text-3xl font-bold">{stats.totalAnakSmk}</p>
                 </div>
-              )}
+                <Users className="w-12 h-12 text-green-600" />
+              </div>
+            </div>
 
-              {/* Devices Tab */}
-              {activeTab === "devices" && (
-                <div className="space-y-4">
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <h2 className="text-xl font-bold mb-4">📱 Daftar Device</h2>
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-white/5">
-                          <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Device ID
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              User
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Kelompok
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Last Used
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Aksi
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200">
-                          {devices.length > 0 ? (
-                            devices.map((device, idx) => (
-                              <tr key={idx} className="hover:bg-white/5">
-                                <td className="px-6 py-4 text-sm font-mono text-white break-all">
-                                  {device.device_id}
-                                </td>
-                                <td className="px-6 py-4 text-sm font-medium">
-                                  {device.user_name}
-                                </td>
-                                <td className="px-6 py-4 text-sm capitalize">
-                                  {device.kelompok}
-                                </td>
-                                <td className="px-6 py-4 text-sm text-white/80">
-                                  {new Date(device.last_used).toLocaleDateString(
-                                    "id-ID",
-                                    {
-                                      year: "numeric",
-                                      month: "short",
-                                      day: "numeric",
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                    },
-                                  )}
-                                </td>
-                                <td className="px-6 py-4 text-sm">
-                                  <button
-                                    onClick={() =>
-                                      handleDeleteDevice(device.device_id)
-                                    }
-                                    className="text-red-600 hover:text-red-800 flex items-center"
-                                  >
-                                    <Trash2 className="w-4 h-4 mr-1" /> Hapus
-                                  </button>
-                                </td>
-                              </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td
-                                colSpan="5"
-                                className="px-6 py-4 text-center text-white/60"
-                              >
-                                Belum ada device
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-white/80">Hadir Hari Ini</p>
+                  <p className="text-3xl font-bold text-green-600">
+                    {stats.hadirToday}
+                  </p>
                 </div>
-              )}
+                <CheckCircle className="w-12 h-12 text-green-600" />
+              </div>
+            </div>
 
-              {/* Attendance Tab */}
-              {activeTab === "attendance" && (
-                <div className="space-y-4">
-                  {/* Filter & Search */}
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <div className="flex flex-col md:flex-row gap-4">
-                      <div className="flex-1 relative">
-                        <Search className="absolute left-3 top-3 w-5 h-5 text-white/50" />
-                        <input
-                          type="text"
-                          placeholder="Cari nama atau kelompok..."
-                          className="input-field pl-10 bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                      </div>
-
-                      <select
-                        value={filter}
-                        onChange={(e) => setFilter(e.target.value)}
-                        className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                      >
-                        <option value="all">Semua</option>
-                        <option value="hadir">Hadir</option>
-                      </select>
-
-                      <button
-                        onClick={handleExport}
-                        className="btn-success flex items-center whitespace-nowrap"
-                      >
-                        <Download className="w-4 h-4 mr-2" /> Export
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Attendance Table */}
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <h2 className="text-xl font-bold mb-4">Absensi Hari Ini</h2>
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-white/5">
-                          <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Nama
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Role
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Kelompok
-                            </th>
-                            <th className="px-6 py-3 text-center text-xs font-medium text-white/60 uppercase">
-                              Pagi
-                            </th>
-                            <th className="px-6 py-3 text-center text-xs font-medium text-white/60 uppercase">
-                              Sore
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Status
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Keterangan
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200">
-                          {filteredAttendance.length > 0 ? (
-                            filteredAttendance.map((item, idx) => (
-                              <tr key={idx} className="hover:bg-white/5">
-                                <td className="px-6 py-4 text-sm font-medium">
-                                  {item.nama}
-                                </td>
-                                <td className="px-6 py-4 text-sm text-white/80 capitalize">
-                                  {item.kelompok}
-                                </td>
-                                <td className="px-6 py-4 text-center text-sm">
-                                  {item.pagi ? (
-                                    <span className="badge-green">
-                                      {item.pagi.jam_masuk}
-                                    </span>
-                                  ) : (
-                                    <span className="text-white/50">-</span>
-                                  )}
-                                </td>
-                                <td className="px-6 py-4 text-center text-sm">
-                                  {item.sore ? (
-                                    <span className="badge-green">
-                                      {item.sore.jam_masuk}
-                                    </span>
-                                  ) : (
-                                    <span className="text-white/50">-</span>
-                                  )}
-                                </td>
-                                <td className="px-6 py-4">
-                                  {item.pagi?.status === "hadir" ||
-                                    item.sore?.status === "hadir" ? (
-                                    <span className="badge-green">Hadir</span>
-                                  ) : (
-                                    <span className="badge-red">Alpa</span>
-                                  )}
-                                </td>
-                              </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td
-                                colSpan="5"
-                                className="px-6 py-4 text-center text-white/60"
-                              >
-                                Tidak ada data
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-white/80">Izin Hari Ini</p>
+                  <p className="text-3xl font-bold text-yellow-600">
+                    {stats.izinToday}
+                  </p>
                 </div>
-              )}
+                <Calendar className="w-12 h-12 text-yellow-600" />
+              </div>
+            </div>
+          </div>
+        )}
 
-              {/* Students Tab */}
-              {activeTab === "students" && (
-                <div className="space-y-4">
-                  {/* Create User Form */}
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <h2 className="text-xl font-bold mb-4">➕ Buat User Baru</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
-                      <div>
-                        <label className="block text-sm font-medium mb-1">Nama</label>
-                        <input
-                          type="text"
-                          placeholder="Nama user"
-                          className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                          value={newUser.nama}
-                          onChange={(e) =>
-                            setNewUser({ ...newUser, nama: e.target.value })
-                          }
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium mb-1">
-                          Password
-                        </label>
-                        <input
-                          type="password"
-                          placeholder="Password"
-                          className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                          value={newUser.password}
-                          onChange={(e) =>
-                            setNewUser({ ...newUser, password: e.target.value })
-                          }
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium mb-1">Role</label>
-                        <select
-                          className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                          value={newUser.role}
-                          onChange={(e) =>
-                            setNewUser({ ...newUser, role: e.target.value })
-                          }
-                        >
-                          <option value="mahasiswa">Mahasiswa</option>
-                          <option value="anak_smk">Anak SMK</option>
-                          <option value="mentor">Mentor</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium mb-1">
-                          Kelompok
-                        </label>
-                        <select
-                          className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                          value={newUser.kelompok}
-                          onChange={(e) =>
-                            setNewUser({ ...newUser, kelompok: e.target.value })
-                          }
-                        >
-                          {kelompokOptions.map((k) => (
-                            <option key={k} value={k}>
-                              {k}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <button
-                        onClick={handleCreateUser}
-                        disabled={creatingUser}
-                        className="btn-success flex items-center justify-center"
-                      >
-                        {creatingUser ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Membuat
-                          </>
-                        ) : (
-                          "Buat User"
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <h2 className="text-xl font-bold mb-4">🔒 Reset Password User</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
-                      <div>
-                        <label className="block text-sm font-medium mb-1">User</label>
-                        <select
-                          className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                          value={resetUserId}
-                          onChange={(e) => setResetUserId(e.target.value)}
-                        >
-                          <option value="">Pilih user</option>
-                          {allUsers.map((user) => (
-                            <option key={user.id || user.nama} value={user.id || ""}>
-                              {user.nama}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium mb-1">
-                          Password Baru
-                        </label>
-                        <input
-                          type="password"
-                          placeholder="Password baru"
-                          className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                          value={resetPassword}
-                          onChange={(e) => setResetPassword(e.target.value)}
-                        />
-                      </div>
-
-                      <button
-                        onClick={handleResetPassword}
-                        disabled={resettingPassword}
-                        className="btn-danger flex items-center justify-center"
-                      >
-                        {resettingPassword ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Resetting
-                          </>
-                        ) : (
-                          "Reset Password"
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Users List */}
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <h2 className="text-xl font-bold mb-4">👥 Daftar Semua User</h2>
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-white/5">
-                          <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Nama
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Role
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Kelompok
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Device Terdaftar (Terpakai/Maks)
-                            </th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                              Aksi
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200">
-                          {allUsers.length > 0 ? (
-                            allUsers.map((user) => (
-                              <tr
-                                key={user.id || user.nama}
-                                className="hover:bg-white/5"
-                              >
-                                <td className="px-6 py-4 text-sm font-medium">
-                                  {user.nama}
-                                </td>
-                                <td className="px-6 py-4 text-sm">
-                                  <span
-                                    className={
-                                      user.role === "admin"
-                                        ? "badge-purple"
-                                        : user.role === "mentor"
-                                          ? "badge-yellow"
-                                          : user.role === "mahasiswa"
-                                            ? "badge-blue"
-                                            : "badge-green"
-                                    }
-                                  >
-                                    {user.role === "admin"
-                                      ? "Admin"
-                                      : user.role === "mentor"
-                                        ? "Mentor"
-                                        : user.role === "mahasiswa"
-                                          ? "Mahasiswa"
-                                          : "Anak SMK"}
-                                  </span>
-                                </td>
-                                <td className="px-6 py-4 text-sm capitalize">
-                                  {user.kelompok || "-"}
-                                </td>
-                                <td className="px-6 py-4 text-sm">
-                                  {(user.role === "admin" || user.role === "mentor")
-                                    ? "-"
-                                    : `${user.devices_count ?? 0}/${user.max_devices ?? 0}`}
-                                </td>
-                                <td className="px-6 py-4 text-sm">
-                                  {user.role === "admin" ? (
-                                    <span className="text-white/50">-</span>
-                                  ) : (
-                                    <button
-                                      onClick={() => handleDeleteUser(user)}
-                                      className="text-red-600 hover:text-red-800 text-sm font-medium flex items-center"
-                                      title="Hapus user"
-                                    >
-                                      <Trash2 className="w-4 h-4 mr-1" /> Hapus
-                                    </button>
-                                  )}
-                                </td>
-                              </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td
-                                colSpan="5"
-                                className="px-6 py-4 text-center text-white/60"
-                              >
-                                Belum ada user
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {/* Old Attendance History Section (if needed) */}
-                  {selectedStudent && (
-                    <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                      <h2 className="text-xl font-bold mb-4">
-                        Riwayat Absensi {selectedStudent}
-                      </h2>
-                      <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200">
-                          <thead className="bg-white/5">
-                            <tr>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                                Tanggal
-                              </th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                                Sesi
-                              </th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                                Jam
-                              </th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
-                                Status
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-200">
-                            {studentAttendance.length > 0 ? (
-                              studentAttendance.map((item, idx) => (
-                                <tr key={idx}>
-                                  <td className="px-6 py-4 text-sm">
-                                    {new Date(item.tanggal).toLocaleDateString(
-                                      "id-ID",
-                                    )}
-                                  </td>
-                                  <td className="px-6 py-4 text-sm capitalize font-medium">
-                                    {item.sesi}
-                                  </td>
-                                  <td className="px-6 py-4 text-sm">
-                                    {item.jam_masuk}
-                                  </td>
-                                  <td className="px-6 py-4">
-                                    <span
-                                      className={
-                                        item.status === "hadir"
-                                          ? "badge-green"
-                                          : item.status === "izin_approved"
-                                            ? "badge-yellow"
-                                            : "badge-red"
-                                      }
-                                    >
-                                      {item.status.replace("_", " ")}
-                                    </span>
-                                  </td>
-                                  <td className="px-6 py-4 text-sm text-white/80">
-                                    {isIzin ? item.keterangan || "-" : "-"}
-                                  </td>
-                                </tr>
-                              ))
-                            ) : (
-                              <tr>
-                                <td
-                                  colSpan="4"
-                                  className="px-6 py-4 text-center text-white/60"
-                                >
-                                  Belum ada riwayat absensi
-                                </td>
-                              </tr>
-                            )}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
+        {/* Logbook Tab */}
+        {activeTab === "logbook" && (
+          <div className="space-y-4">
+            {/* Filter */}
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4">🔍 Filter Logbook</h2>
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Status</label>
+                  <select
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={logbookFilter.status}
+                    onChange={(e) =>
+                      setLogbookFilter({
+                        ...logbookFilter,
+                        status: e.target.value,
+                      })
+                    }
+                  >
+                    <option value="all">Semua</option>
+                    <option value="draft">Draft</option>
+                    <option value="submitted">Submitted</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Nama</label>
+                  <input
+                    type="text"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    placeholder="Cari nama..."
+                    value={logbookFilter.nama}
+                    onChange={(e) =>
+                      setLogbookFilter({
+                        ...logbookFilter,
+                        nama: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Dari Tanggal
+                  </label>
+                  <input
+                    type="date"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={logbookFilter.fromDate}
+                    onChange={(e) =>
+                      setLogbookFilter({
+                        ...logbookFilter,
+                        fromDate: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Sampai Tanggal
+                  </label>
+                  <input
+                    type="date"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={logbookFilter.toDate}
+                    onChange={(e) =>
+                      setLogbookFilter({
+                        ...logbookFilter,
+                        toDate: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <button
+                  onClick={fetchLogbookData}
+                  disabled={logbookLoading}
+                  className="btn-primary flex items-center justify-center"
+                >
+                  {logbookLoading ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    "Filter"
                   )}
+                </button>
+              </div>
+            </div>
+
+            {/* List Logbook */}
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold">
+                  📓 Daftar Logbook ({logbookList.length})
+                </h2>
+              </div>
+
+              {logbookLoading ? (
+                <div className="text-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin mx-auto text-blue-600" />
                 </div>
-              )}
-
-              {/* Report Tab - Hanya menampilkan daftar izin */}
-              {activeTab === "report" && (
-                <div className="space-y-4">
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <div className="flex justify-between items-center mb-4">
-                      <h2 className="text-xl font-bold">📋 Persetujuan Izin Mahasiswa</h2>
-                      <button
-                        onClick={() => fetchIzinData()}
-                        className="btn-primary flex items-center text-sm"
-                      >
-                        <Search className="w-4 h-4 mr-2" /> Refresh
-                      </button>
-                    </div>
-
-                    {izinLoading ? (
-                      <div className="flex justify-center py-10">
-                        <Loader2 className="w-8 h-8 animate-spin text-white/60" />
-                      </div>
-                    ) : (
-                      <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-white/10">
-                          <thead className="bg-white/5">
-                            <tr>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">Nama</th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">Kelompok</th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">Tanggal</th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">Sesi</th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">Keterangan</th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">Bukti</th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">Status</th>
-                              <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">Aksi</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-white/10">
-                            {izinList.length > 0 ? (
-                              izinList.map((item, idx) => {
-                                const approval = (item.status_approval || "").toLowerCase().trim();
-                                const isPending = approval === "pending" || approval === "";
-                                return (
-                                  <tr key={idx} className="hover:bg-white/5">
-                                    <td className="px-6 py-4 text-sm font-medium text-white">{item.nama}</td>
-                                    <td className="px-6 py-4 text-sm text-white/80 capitalize">{item.kelompok}</td>
-                                    <td className="px-6 py-4 text-sm text-white/80">
-                                      {new Date(item.tanggal).toLocaleDateString("id-ID", {
-                                        weekday: "short", year: "numeric", month: "short", day: "numeric"
-                                      })}
-                                    </td>
-                                    <td className="px-6 py-4 text-sm text-white/80 capitalize">{item.sesi}</td>
-                                    <td className="px-6 py-4 text-sm text-white/80">{item.keterangan || "-"}</td>
-                                    <td className="px-6 py-4 text-sm">
-                                      {item.bukti_url ? (
-                                        <a
-                                          href={item.bukti_url}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="text-blue-300 hover:text-blue-200 underline"
-                                        >
-                                          Lihat
-                                        </a>
-                                      ) : (
-                                        <span className="text-white/40">-</span>
-                                      )}
-                                    </td>
-                                    <td className="px-6 py-4">
-                                      <span className={
-                                        approval === "approved" ? "badge-green" :
-                                        approval === "rejected" ? "badge-red" :
-                                        "badge-yellow"
-                                      }>
-                                        {approval === "approved" ? "Disetujui" :
-                                         approval === "rejected" ? "Ditolak" : "Pending"}
-                                      </span>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                      <div className="flex items-center gap-3">
-                                        {isPending ? (
-                                          <div className="flex gap-2">
-                                            <button
-                                              onClick={() => handleUpdateIzin(item.id, "approved")}
-                                              className="text-green-400 hover:text-green-300 text-sm font-medium flex items-center"
-                                              title="Setujui"
-                                            >
-                                              <CheckCircle className="w-4 h-4 mr-1" /> Setujui
-                                            </button>
-                                            <button
-                                              onClick={() => handleUpdateIzin(item.id, "rejected")}
-                                              className="text-red-400 hover:text-red-300 text-sm font-medium flex items-center"
-                                              title="Tolak"
-                                            >
-                                              <XCircle className="w-4 h-4 mr-1" /> Tolak
-                                            </button>
-                                          </div>
-                                        ) : (
-                                          <span className="text-sm text-white/50 min-w-[100px]">
-                                            {item.approved_by ? `oleh ${item.approved_by}` : "-"}
-                                          </span>
-                                        )}
-                                        <button
-                                          onClick={() => handleDeleteIzin(item)}
-                                          className="text-red-500 hover:text-red-400 text-sm font-medium flex items-center"
-                                          title="Hapus Izin"
-                                        >
-                                          <Trash2 className="w-4 h-4" />
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                );
-                              })
-                            ) : (
-                              <tr>
-                                <td colSpan="8" className="px-6 py-10 text-center text-white/50">
-                                  Belum ada pengajuan izin
-                                </td>
-                              </tr>
+              ) : logbookList.length === 0 ? (
+                <p className="text-center text-white/60 py-6">
+                  Belum ada logbook
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {logbookList.map((item) => (
+                    <div
+                      key={item.id}
+                      className={`p-4 border rounded-lg ${
+                        item.status === "submitted"
+                          ? "border-green-200 bg-green-50/30"
+                          : "border-yellow-200 bg-yellow-50/30"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div>
+                          <p className="font-semibold text-white">
+                            {item.nama}
+                          </p>
+                          <p className="text-xs text-white/60">
+                            {item.kelompok && (
+                              <span className="capitalize mr-2">
+                                {item.kelompok}
+                              </span>
                             )}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-
-
-              {/* Holidays Tab */}
-              {activeTab === "holidays" && (
-                <div className="space-y-6">
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <h2 className="text-xl font-bold mb-4 flex items-center">
-                      <Calendar className="w-6 h-6 mr-2 text-red-600" />
-                      Tambah Tanggal Merah
-                    </h2>
-                    <form onSubmit={handleAddHoliday} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium mb-1 text-white/90">Tanggal</label>
-                        <input
-                          type="date"
-                          required
-                          className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                          value={newHoliday.tanggal}
-                          onChange={(e) => setNewHoliday({ ...newHoliday, tanggal: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium mb-1 text-white/90">Keterangan</label>
-                        <input
-                          type="text"
-                          required
-                          placeholder="Contoh: Hari Kemerdekaan"
-                          className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                          value={newHoliday.keterangan}
-                          onChange={(e) => setNewHoliday({ ...newHoliday, keterangan: e.target.value })}
-                        />
-                      </div>
-                      <div className="flex items-end">
-                        <button
-                          type="submit"
-                          disabled={addingHoliday}
-                          className="btn-primary w-full h-[42px] flex items-center justify-center"
-                        >
-                          {addingHoliday ? <Loader2 className="w-5 h-5 animate-spin" /> : "Tambah"}
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-                    <h2 className="text-xl font-bold mb-4">Daftar Tanggal Merah</h2>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse">
-                        <thead>
-                          <tr className="bg-white/5 border-y">
-                            <th className="px-6 py-4 text-sm font-semibold text-white/80">Tanggal</th>
-                            <th className="px-6 py-4 text-sm font-semibold text-white/80">Keterangan</th>
-                            <th className="px-6 py-4 text-sm font-semibold text-white/80">Aksi</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-100">
-                          {holidays.length > 0 ? (
-                            holidays.map((holiday) => (
-                              <tr key={holiday.id} className="hover:bg-white/5">
-                                <td className="px-6 py-4 text-sm text-red-600 font-medium">
-                                  {new Date(holiday.tanggal).toLocaleDateString("id-ID", {
-                                    weekday: "long",
-                                    year: "numeric",
-                                    month: "long",
-                                    day: "numeric",
-                                  })}
-                                </td>
-                                <td className="px-6 py-4 text-sm text-gray-800">{holiday.keterangan}</td>
-                                <td className="px-6 py-4">
-                                  <button
-                                    onClick={() => handleDeleteHoliday(holiday)}
-                                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                    title="Hapus"
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                </td>
-                              </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td colSpan="3" className="px-6 py-8 text-center text-white/60">
-                                Belum ada tanggal merah yang ditambahkan
-                              </td>
-                            </tr>
+                            {new Date(item.tanggal).toLocaleDateString(
+                              "id-ID",
+                              {
+                                weekday: "long",
+                                year: "numeric",
+                                month: "long",
+                                day: "numeric",
+                              },
+                            )}
+                          </p>
+                          <span
+                            className={
+                              item.status === "submitted"
+                                ? "badge-green mt-1 inline-block"
+                                : "badge-yellow mt-1 inline-block"
+                            }
+                          >
+                            {item.status === "submitted"
+                              ? "Submitted"
+                              : "Draft"}
+                          </span>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          {item.status === "submitted" && (
+                            <button
+                              onClick={() => handleResetLogbook(item)}
+                              className="text-xs text-blue-600 hover:text-blue-800 px-2 py-1 border border-blue-200 rounded"
+                              title="Buka kembali untuk diedit"
+                            >
+                              Reset ke Draft
+                            </button>
                           )}
-                        </tbody>
-                      </table>
+                          <button
+                            onClick={() => handleDeleteLogbookAdmin(item)}
+                            className="text-xs text-red-600 hover:text-red-800 px-2 py-1 border border-red-200 rounded flex items-center justify-center gap-1"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            Hapus
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-sm text-white/90 whitespace-pre-wrap mb-1">
+                        <strong>Kegiatan:</strong> {item.kegiatan}
+                      </p>
+                      {item.kendala && (
+                        <p className="text-sm text-white/80 whitespace-pre-wrap">
+                          <strong>Kendala:</strong> {item.kendala}
+                        </p>
+                      )}
+                      {item.submitted_at && (
+                        <p className="text-xs text-white/50 mt-2">
+                          Disubmit:{" "}
+                          {new Date(item.submitted_at).toLocaleString("id-ID")}
+                        </p>
+                      )}
                     </div>
-                  </div>
+                  ))}
                 </div>
               )}
+            </div>
+          </div>
+        )}
 
-              {activeTab === "settings" && (
-                <div className="space-y-6 animate-fade-in text-white">
-                  <div className="rounded-2xl border border-white/15 bg-white/10 p-6 shadow-sm backdrop-blur-md">
-                    <h2 className="text-xl font-bold mb-4 flex items-center">
-                      <CalendarIcon className="w-5 h-5 mr-2" /> Pengaturan Jam Absensi
-                    </h2>
-                    <form onSubmit={handleSaveSettings} className="space-y-6">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="space-y-4">
-                          <h3 className="font-semibold border-b border-white/20 pb-2">Absensi Pagi</h3>
-                          <div>
-                            <label className="block text-sm font-medium mb-1 text-white/90">Jam Buka Pagi</label>
-                            <input
-                              type="time"
-                              required
-                              className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                              value={settings.pagi_start}
-                              onChange={(e) => setSettings({ ...settings, pagi_start: e.target.value })}
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium mb-1 text-white/90">Jam Tutup Pagi</label>
-                            <input
-                              type="time"
-                              required
-                              className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                              value={settings.pagi_end}
-                              onChange={(e) => setSettings({ ...settings, pagi_end: e.target.value })}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="space-y-4">
-                          <h3 className="font-semibold border-b border-white/20 pb-2">Absensi Sore</h3>
-                          <div>
-                            <label className="block text-sm font-medium mb-1 text-white/90">Jam Buka Sore</label>
-                            <input
-                              type="time"
-                              required
-                              className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                              value={settings.sore_start}
-                              onChange={(e) => setSettings({ ...settings, sore_start: e.target.value })}
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium mb-1 text-white/90">Jam Tutup Sore</label>
-                            <input
-                              type="time"
-                              required
-                              className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
-                              value={settings.sore_end}
-                              onChange={(e) => setSettings({ ...settings, sore_end: e.target.value })}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="flex justify-end pt-4">
-                        <button
-                          type="submit"
-                          disabled={savingSettings}
-                          className="btn-primary flex items-center px-6 py-2"
+        {/* Devices Tab */}
+        {activeTab === "devices" && (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4">📱 Daftar Device</h2>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-white/5">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Device ID
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        User
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Kelompok
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Last Used
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Aksi
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {devices.length > 0 ? (
+                      devices.map((device, idx) => (
+                        <tr key={idx} className="hover:bg-white/5">
+                          <td className="px-6 py-4 text-sm font-mono text-white break-all">
+                            {device.device_id}
+                          </td>
+                          <td className="px-6 py-4 text-sm font-medium">
+                            {device.user_name}
+                          </td>
+                          <td className="px-6 py-4 text-sm capitalize">
+                            {device.kelompok}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-white/80">
+                            {new Date(device.last_used).toLocaleDateString(
+                              "id-ID",
+                              {
+                                year: "numeric",
+                                month: "short",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              },
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-sm">
+                            <button
+                              onClick={() =>
+                                handleDeleteDevice(device.device_id)
+                              }
+                              className="text-red-600 hover:text-red-800 flex items-center"
+                            >
+                              <Trash2 className="w-4 h-4 mr-1" /> Hapus
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td
+                          colSpan="5"
+                          className="px-6 py-4 text-center text-white/60"
                         >
-                          {savingSettings ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : <CheckCircle className="w-5 h-5 mr-2" />}
-                          Simpan Pengaturan
-                        </button>
-                      </div>
-                    </form>
+                          Belum ada device
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Attendance Tab */}
+        {activeTab === "attendance" && (
+          <div className="space-y-4">
+            {/* Filter & Search */}
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <div className="flex flex-col md:flex-row gap-4">
+                <div className="flex-1 relative">
+                  <Search className="absolute left-3 top-3 w-5 h-5 text-white/50" />
+                  <input
+                    type="text"
+                    placeholder="Cari nama atau kelompok..."
+                    className="input-field pl-10 bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+
+                <select
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                >
+                  <option value="all">Semua</option>
+                  <option value="hadir">Hadir</option>
+                </select>
+
+                <button
+                  onClick={handleExport}
+                  className="btn-success flex items-center whitespace-nowrap"
+                >
+                  <Download className="w-4 h-4 mr-2" /> Export
+                </button>
+              </div>
+            </div>
+
+            {/* Attendance Table */}
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4">Absensi Hari Ini</h2>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-white/5">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Nama
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Role
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Kelompok
+                      </th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-white/60 uppercase">
+                        Pagi
+                      </th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-white/60 uppercase">
+                        Sore
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Status
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Keterangan
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {filteredAttendance.length > 0 ? (
+                      filteredAttendance.map((item, idx) => (
+                        <tr key={idx} className="hover:bg-white/5">
+                          <td className="px-6 py-4 text-sm font-medium">
+                            {item.nama}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-white/80 capitalize">
+                            {item.kelompok}
+                          </td>
+                          <td className="px-6 py-4 text-center text-sm">
+                            {item.pagi ? (
+                              <span className="badge-green">
+                                {item.pagi.jam_masuk}
+                              </span>
+                            ) : (
+                              <span className="text-white/50">-</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 text-center text-sm">
+                            {item.sore ? (
+                              <span className="badge-green">
+                                {item.sore.jam_masuk}
+                              </span>
+                            ) : (
+                              <span className="text-white/50">-</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4">
+                            {item.pagi?.status === "hadir" ||
+                            item.sore?.status === "hadir" ? (
+                              <span className="badge-green">Hadir</span>
+                            ) : (
+                              <span className="badge-red">Alpa</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td
+                          colSpan="5"
+                          className="px-6 py-4 text-center text-white/60"
+                        >
+                          Tidak ada data
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Students Tab */}
+        {activeTab === "students" && (
+          <div className="space-y-4">
+            {/* Create User Form */}
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4">➕ Buat User Baru</h2>
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Nama</label>
+                  <input
+                    type="text"
+                    placeholder="Nama user"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={newUser.nama}
+                    onChange={(e) =>
+                      setNewUser({ ...newUser, nama: e.target.value })
+                    }
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Password
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="Password"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={newUser.password}
+                    onChange={(e) =>
+                      setNewUser({ ...newUser, password: e.target.value })
+                    }
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">Role</label>
+                  <select
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={newUser.role}
+                    onChange={(e) =>
+                      setNewUser({ ...newUser, role: e.target.value })
+                    }
+                  >
+                    <option value="mahasiswa">Mahasiswa</option>
+                    <option value="anak_smk">Anak SMK</option>
+                    <option value="mentor">Mentor</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Kelompok
+                  </label>
+                  <select
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={newUser.kelompok}
+                    onChange={(e) =>
+                      setNewUser({ ...newUser, kelompok: e.target.value })
+                    }
+                  >
+                    {kelompokOptions.map((k) => (
+                      <option key={k} value={k}>
+                        {k}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  onClick={handleCreateUser}
+                  disabled={creatingUser}
+                  className="btn-success flex items-center justify-center"
+                >
+                  {creatingUser ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Membuat
+                    </>
+                  ) : (
+                    "Buat User"
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4">🔒 Reset Password User</h2>
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
+                <div>
+                  <label className="block text-sm font-medium mb-1">User</label>
+                  <select
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={resetUserId}
+                    onChange={(e) => setResetUserId(e.target.value)}
+                  >
+                    <option value="">Pilih user</option>
+                    {allUsers.map((user) => (
+                      <option key={user.id || user.nama} value={user.id || ""}>
+                        {user.nama}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Password Baru
+                  </label>
+                  <input
+                    type="password"
+                    placeholder="Password baru"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={resetPassword}
+                    onChange={(e) => setResetPassword(e.target.value)}
+                  />
+                </div>
+
+                <button
+                  onClick={handleResetPassword}
+                  disabled={resettingPassword}
+                  className="btn-danger flex items-center justify-center"
+                >
+                  {resettingPassword ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Resetting
+                    </>
+                  ) : (
+                    "Reset Password"
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Users List */}
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4">👥 Daftar Semua User</h2>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-white/5">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Nama
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Role
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Kelompok
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Device Terdaftar (Terpakai/Maks)
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Aksi
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {allUsers.length > 0 ? (
+                      allUsers.map((user) => (
+                        <tr
+                          key={user.id || user.nama}
+                          className="hover:bg-white/5"
+                        >
+                          <td className="px-6 py-4 text-sm font-medium">
+                            {user.nama}
+                          </td>
+                          <td className="px-6 py-4 text-sm">
+                            <span
+                              className={
+                                user.role === "admin"
+                                  ? "badge-purple"
+                                  : user.role === "mentor"
+                                    ? "badge-yellow"
+                                    : user.role === "mahasiswa"
+                                      ? "badge-blue"
+                                      : "badge-green"
+                              }
+                            >
+                              {user.role === "admin"
+                                ? "Admin"
+                                : user.role === "mentor"
+                                  ? "Mentor"
+                                  : user.role === "mahasiswa"
+                                    ? "Mahasiswa"
+                                    : "Anak SMK"}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 text-sm capitalize">
+                            {user.kelompok || "-"}
+                          </td>
+                          <td className="px-6 py-4 text-sm">
+                            {(user.role === "admin" || user.role === "mentor")
+                              ? "-"
+                              : `${user.devices_count ?? 0}/${user.max_devices ?? 0}`}
+                          </td>
+                          <td className="px-6 py-4 text-sm">
+                            {user.role === "admin" ? (
+                              <span className="text-white/50">-</span>
+                            ) : (
+                              <button
+                                onClick={() => handleDeleteUser(user)}
+                                className="text-red-600 hover:text-red-800 text-sm font-medium flex items-center"
+                                title="Hapus user"
+                              >
+                                <Trash2 className="w-4 h-4 mr-1" /> Hapus
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td
+                          colSpan="5"
+                          className="px-6 py-4 text-center text-white/60"
+                        >
+                          Belum ada user
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Old Attendance History Section (if needed) */}
+            {selectedStudent && (
+              <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+                <h2 className="text-xl font-bold mb-4">
+                  Riwayat Absensi {selectedStudent}
+                </h2>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-white/5">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                          Tanggal
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                          Sesi
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                          Jam
+                        </th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                          Status
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {studentAttendance.length > 0 ? (
+                        studentAttendance.map((item, idx) => (
+                          <tr key={idx}>
+                            <td className="px-6 py-4 text-sm">
+                              {new Date(item.tanggal).toLocaleDateString(
+                                "id-ID",
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-sm capitalize font-medium">
+                              {item.sesi}
+                            </td>
+                            <td className="px-6 py-4 text-sm">
+                              {item.jam_masuk}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span
+                                className={
+                                  item.status === "hadir"
+                                    ? "badge-green"
+                                    : item.status === "izin_approved"
+                                      ? "badge-yellow"
+                                      : "badge-red"
+                                }
+                              >
+                                {item.status.replace("_", " ")}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-white/80">
+                              {isIzin ? item.keterangan || "-" : "-"}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td
+                            colSpan="4"
+                            className="px-6 py-4 text-center text-white/60"
+                          >
+                            Belum ada riwayat absensi
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Izin Tab */}
+        {/* Report Tab */}
+        {activeTab === "report" && (
+          <div className="space-y-4">
+            {/* Filter Card */}
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4">🔍 Filter Absensi</h2>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Dari Tanggal
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-3 w-4 h-4 text-white/50" />
+                    <input
+                      type="date"
+                      className="input-field pl-10 bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                      value={reportFilters.fromDate}
+                      onChange={(e) =>
+                        setReportFilters({
+                          ...reportFilters,
+                          fromDate: e.target.value,
+                        })
+                      }
+                    />
                   </div>
                 </div>
-              )}
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Sampai Tanggal
+                  </label>
+                  <div className="relative">
+                    <Calendar className="absolute left-3 top-3 w-4 h-4 text-white/50" />
+                    <input
+                      type="date"
+                      className="input-field pl-10 bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                      value={reportFilters.toDate}
+                      onChange={(e) =>
+                        setReportFilters({
+                          ...reportFilters,
+                          toDate: e.target.value,
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Kelompok
+                  </label>
+                  <select
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={reportFilters.kelompok}
+                    onChange={(e) => {
+                      const nextKelompok = e.target.value;
+                      const nextStudents =
+                        nextKelompok === "all"
+                          ? students
+                          : students.filter(
+                              (student) => student.kelompok === nextKelompok,
+                            );
+                      const namaStillValid =
+                        reportFilters.nama === "all" ||
+                        nextStudents.some(
+                          (student) => student.nama === reportFilters.nama,
+                        );
+
+                      setReportFilters({
+                        ...reportFilters,
+                        kelompok: nextKelompok,
+                        nama: namaStillValid ? reportFilters.nama : "all",
+                      });
+                    }}
+                  >
+                    <option value="all">Semua Kelompok</option>
+                    {kelompokOptions.map((k) => (
+                      <option key={k} value={k}>
+                        {k}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium mb-1">
+                    Siswa
+                  </label>
+                  <select
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={reportFilters.nama}
+                    onChange={(e) =>
+                      setReportFilters({
+                        ...reportFilters,
+                        nama: e.target.value,
+                      })
+                    }
+                  >
+                    <option value="all">Semua Siswa</option>
+                    {filteredReportStudents.map((student) => (
+                      <option key={student.nama} value={student.nama}>
+                        {student.nama}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  onClick={fetchReportData}
+                  disabled={reportLoading}
+                  className="btn-primary flex items-center justify-center"
+                >
+                  {reportLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" /> Filter
+                    </>
+                  ) : (
+                    "Filter"
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* Report Data Card */}
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold">
+                  📋 Data Absensi ({reportData.length})
+                </h2>
+                <button
+                  onClick={handleExportReport}
+                  disabled={reportData.length === 0}
+                  className="btn-success flex items-center"
+                >
+                  <Download className="w-4 h-4 mr-2" /> Export Excel
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-white/5">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Nama
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Role
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Jurusan
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Tanggal
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Sesi
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Jam Masuk
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Status
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Keterangan
+                      </th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-white/60 uppercase">
+                        Aksi
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {reportData.length > 0 ? (
+                      reportData.map((item, idx) => {
+                        const normalizedApproval = (item.status_approval || "")
+                          .toLowerCase()
+                          .trim();
+                        const isIzin = item.status === "izin";
+                        const approvalLabel =
+                          normalizedApproval === "approved"
+                            ? "Izin Disetujui"
+                            : normalizedApproval === "rejected"
+                              ? "Izin Ditolak"
+                              : normalizedApproval === "cancelled"
+                                ? "Izin Dibatalkan"
+                                : "Izin Pending";
+
+                        return (
+                          <tr key={idx} className="hover:bg-white/5">
+                            <td className="px-6 py-4 text-sm font-medium">
+                              {item.nama}
+                            </td>
+                            <td className="px-6 py-4 text-sm capitalize">
+                              {studentRoleByName[item.nama] || "-"}
+                            </td>
+                            <td className="px-6 py-4 text-sm capitalize">
+                              {item.kelompok}
+                            </td>
+                            <td className="px-6 py-4 text-sm">
+                              {new Date(item.tanggal).toLocaleDateString(
+                                "id-ID",
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-sm capitalize font-medium">
+                              {item.sesi}
+                            </td>
+                            <td className="px-6 py-4 text-sm">
+                              {item.jam_masuk}
+                            </td>
+                            <td className="px-6 py-4">
+                              <span
+                                className={
+                                  isIzin
+                                    ? normalizedApproval === "approved"
+                                      ? "badge-green"
+                                      : normalizedApproval === "rejected"
+                                        ? "badge-red"
+                                        : normalizedApproval === "cancelled"
+                                          ? "badge-blue"
+                                          : "badge-yellow"
+                                    : item.status === "hadir"
+                                      ? "badge-green"
+                                      : "badge-red"
+                                }
+                              >
+                                {isIzin
+                                  ? approvalLabel
+                                  : item.status.charAt(0).toUpperCase() +
+                                    item.status.slice(1)}
+                              </span>
+                            </td>
+                            <td className="px-6 py-4 text-sm">
+                              {item.keterangan || "-"}
+                            </td>
+                            <td className="px-6 py-4">
+                              {item.status === "izin" ? (
+                                normalizedApproval === "approved" ||
+                                normalizedApproval === "rejected" ||
+                                normalizedApproval === "cancelled" ? (
+                                  <div className="flex items-center gap-3">
+                                    <span className="text-sm text-white/60">
+                                      {item.approved_by
+                                        ? `oleh ${item.approved_by}`
+                                        : "-"}
+                                    </span>
+                                    <button
+                                      onClick={() => handleDeleteAttendance(item)}
+                                      className="text-red-500 hover:text-red-700 transition"
+                                      title="Hapus"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() =>
+                                        handleUpdateIzin(item.id, "approved")
+                                      }
+                                      className="text-green-600 hover:text-green-800 text-sm font-medium flex items-center"
+                                      title="Setujui"
+                                    >
+                                      <CheckCircle className="w-4 h-4 mr-1" />
+                                      Setujui
+                                    </button>
+                                    <button
+                                      onClick={() =>
+                                        handleUpdateIzin(item.id, "rejected")
+                                      }
+                                      className="text-red-600 hover:text-red-800 text-sm font-medium flex items-center"
+                                      title="Tolak"
+                                    >
+                                      <XCircle className="w-4 h-4 mr-1" />
+                                      Tolak
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteAttendance(item)}
+                                      className="text-red-500 hover:text-red-700 ml-2"
+                                      title="Hapus"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                )
+                              ) : (
+                                <button
+                                  onClick={() => handleDeleteAttendance(item)}
+                                  className="text-red-500 hover:text-red-700 transition flex items-center gap-1 text-sm font-medium"
+                                  title="Hapus Absensi"
+                                >
+                                  <Trash2 className="w-4 h-4" /> Hapus
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td
+                          colSpan="7"
+                          className="px-6 py-4 text-center text-white/60"
+                        >
+                          Klik "Filter" untuk menampilkan data
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Holidays Tab */}
+        {activeTab === "holidays" && (
+          <div className="space-y-6">
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4 flex items-center">
+                <Calendar className="w-6 h-6 mr-2 text-red-600" />
+                Tambah Tanggal Merah
+              </h2>
+              <form onSubmit={handleAddHoliday} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1 text-white/90">Tanggal</label>
+                  <input
+                    type="date"
+                    required
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={newHoliday.tanggal}
+                    onChange={(e) => setNewHoliday({ ...newHoliday, tanggal: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1 text-white/90">Keterangan</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="Contoh: Hari Kemerdekaan"
+                    className="input-field bg-white/10 border-white/20 text-white placeholder-white/50 [&>option]:text-gray-900"
+                    value={newHoliday.keterangan}
+                    onChange={(e) => setNewHoliday({ ...newHoliday, keterangan: e.target.value })}
+                  />
+                </div>
+                <div className="flex items-end">
+                  <button
+                    type="submit"
+                    disabled={addingHoliday}
+                    className="btn-primary w-full h-[42px] flex items-center justify-center"
+                  >
+                    {addingHoliday ? <Loader2 className="w-5 h-5 animate-spin" /> : "Tambah"}
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
+              <h2 className="text-xl font-bold mb-4">Daftar Tanggal Merah</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-white/5 border-y">
+                      <th className="px-6 py-4 text-sm font-semibold text-white/80">Tanggal</th>
+                      <th className="px-6 py-4 text-sm font-semibold text-white/80">Keterangan</th>
+                      <th className="px-6 py-4 text-sm font-semibold text-white/80">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {holidays.length > 0 ? (
+                      holidays.map((holiday) => (
+                        <tr key={holiday.id} className="hover:bg-white/5">
+                          <td className="px-6 py-4 text-sm text-red-600 font-medium">
+                            {new Date(holiday.tanggal).toLocaleDateString("id-ID", {
+                              weekday: "long",
+                              year: "numeric",
+                              month: "long",
+                              day: "numeric",
+                            })}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-800">{holiday.keterangan}</td>
+                          <td className="px-6 py-4">
+                            <button
+                              onClick={() => handleDeleteHoliday(holiday)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Hapus"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan="3" className="px-6 py-8 text-center text-white/60">
+                          Belum ada tanggal merah yang ditambahkan
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        )}
             </div>
           </main>
         </div>

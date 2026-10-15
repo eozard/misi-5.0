@@ -23,9 +23,13 @@ import {
   Download,
   GraduationCap,
   FileCheck,
+  ListTodo,
+  ExternalLink,
+  Upload,
+  CheckCircle2,
+  AlertTriangle,
+  Paperclip,
 } from "lucide-react";
-import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
 import axiosInstance from "../utils/axios";
 import ToastStack from "../components/Toast";
 import Sidebar from "../components/Sidebar";
@@ -66,7 +70,6 @@ const MahasiswaDashboard = () => {
   const [editingLogbookId, setEditingLogbookId] = useState(null);
   // State tanggal merah
   const [holidays, setHolidays] = useState([]);
-  const [todayHoliday, setTodayHoliday] = useState(null);
   // State Penilaian
   const [grades, setGrades] = useState([]);
   // State Sertifikat
@@ -77,6 +80,12 @@ const MahasiswaDashboard = () => {
   const [taForm, setTaForm] = useState({ judul: "", deskripsi: "", file: null });
   const [taLoading, setTaLoading] = useState(false);
 
+  // State Tugas Mingguan
+  const [tugasMingguanList, setTugasMingguanList] = useState([]);
+  const [selectedTM, setSelectedTM] = useState(null);
+  const [tmSubmitForm, setTmSubmitForm] = useState({ catatan_mahasiswa: "", link_url: "", file: null });
+  const [tmLoading, setTmLoading] = useState(false);
+
   // Notifikasi toast untuk feedback user
   const { toasts, pushToast, dismissToast } = useToast();
   const navigate = useNavigate();
@@ -86,6 +95,7 @@ const MahasiswaDashboard = () => {
 
   const menuItems = [
     { id: "absensi", label: "Absensi", icon: CheckCircle },
+    { id: "tugasMingguan", label: "Tugas Mingguan", icon: ListTodo },
     { id: "logbook", label: "Logbook", icon: BookOpen },
     { id: "izin", label: "Izin", icon: FileText },
     { id: "holidays", label: "Libur", icon: Calendar },
@@ -126,6 +136,7 @@ const MahasiswaDashboard = () => {
       fetchGrades();
       fetchCertificates();
       fetchTugasAkhir();
+      fetchTugasMingguan();
     }, 150);
   }, []);
 
@@ -139,6 +150,62 @@ const MahasiswaDashboard = () => {
       console.error(err);
     }
   };
+
+  const fetchTugasMingguan = async () => {
+    try {
+      const res = await axiosInstance.get("/tugas-mingguan");
+      if (res.data.success) {
+        setTugasMingguanList(res.data.data || []);
+      }
+    } catch (err) {
+      console.error("Fetch tugas mingguan error:", err);
+    }
+  };
+
+  const handleSubmitTugasMingguan = async (e, tugasId) => {
+    e.preventDefault();
+    if (!tmSubmitForm.file && !tmSubmitForm.link_url.trim() && !tmSubmitForm.catatan_mahasiswa.trim()) {
+      pushToast({
+        type: "warning",
+        title: "Lengkapi Pengumpulan",
+        message: "Unggah file, masukkan link pengerjaan, atau tulis catatan pengerjaan",
+      });
+      return;
+    }
+
+    setTmLoading(true);
+    try {
+      const formData = new FormData();
+      if (tmSubmitForm.catatan_mahasiswa) formData.append("catatan_mahasiswa", tmSubmitForm.catatan_mahasiswa);
+      if (tmSubmitForm.link_url) formData.append("link_url", tmSubmitForm.link_url);
+      if (tmSubmitForm.file) formData.append("file", tmSubmitForm.file);
+
+      const res = await axiosInstance.post(`/tugas-mingguan/${tugasId}/submit`, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      if (res.data.success) {
+        pushToast({
+          type: "success",
+          title: "Berhasil Dikumpulkan",
+          message: "Tugas mingguan berhasil dikirim ke mentor",
+        });
+        setSelectedTM(null);
+        setTmSubmitForm({ catatan_mahasiswa: "", link_url: "", file: null });
+        fetchTugasMingguan();
+      }
+    } catch (error) {
+      console.error("Submit tugas mingguan error:", error);
+      pushToast({
+        type: "error",
+        title: "Gagal Mengumpulkan",
+        message: error.response?.data?.message || "Gagal mengumpulkan tugas",
+      });
+    } finally {
+      setTmLoading(false);
+    }
+  };
+
 
   // Update status waktu absen setiap detik
   useEffect(() => {
@@ -157,15 +224,9 @@ const MahasiswaDashboard = () => {
       const soreStart = 15 * 60;
       const soreEnd = 17 * 60;
 
-      // Check if today is a holiday
-      const currentToday = todayString();
-      const isHoliday = holidays.find((h) => h.tanggal && h.tanggal.startsWith(currentToday));
-      setTodayHoliday(isHoliday || null);
-
-      if (isHoliday) {
-        setCanAbsenPagi(false);
-        setCanAbsenSore(false);
-      } else if (bypassPagiOnly) {
+      // DEVELOPMENT: Untuk test/trial and error, gunakan env Vite untuk unlock tombol
+      // Backend tetap akan validate dengan BYPASS_TIME_CHECK=true
+      if (bypassPagiOnly) {
         // Mode bypass pagi-only: hanya allow absen pagi
         setCanAbsenPagi(true);
         setCanAbsenSore(false);
@@ -190,7 +251,7 @@ const MahasiswaDashboard = () => {
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [holidays, bypassMode, bypassPagiOnly]);
+  }, []);
 
   // Ambil riwayat absensi user
   const fetchRiwayat = async () => {
@@ -227,35 +288,6 @@ const MahasiswaDashboard = () => {
     } catch (error) {
       console.error("Fetch grades error:", error);
     }
-  };
-
-  const exportGradesPDF = () => {
-    const doc = new jsPDF();
-    doc.text(`Laporan Penilaian - ${user?.nama || 'Mahasiswa'}`, 14, 15);
-
-    const head = [["Indikator Penilaian", "Bobot", "Nilai (0-100)"]];
-    const body = grades.map(g => [g.nama_indikator, `${g.bobot}%`, g.nilai]);
-    
-    let total = 0;
-    let totalBobot = 0;
-    grades.forEach(g => {
-      total += (parseFloat(g.nilai) || 0) * ((parseFloat(g.bobot) || 0) / 100);
-      totalBobot += (parseFloat(g.bobot) || 0);
-    });
-    if (totalBobot > 0) {
-      total = (total / totalBobot) * 100;
-    }
-    body.push(["Total Nilai (Tertimbang)", "", total.toFixed(2)]);
-
-    autoTable(doc, {
-      startY: 25,
-      head: head,
-      body: body,
-      theme: 'grid',
-      headStyles: { fillColor: [76, 29, 149] }
-    });
-
-    doc.save(`Penilaian_${user?.nama || 'Mahasiswa'}.pdf`);
   };
 
   const fetchCertificates = async () => {
@@ -653,6 +685,18 @@ const MahasiswaDashboard = () => {
     );
   });
 
+  // Cek apakah hari ini adalah hari libur
+  // todayString() sudah ada sebagai helper: format YYYY-MM-DD WIB
+  const todayStr = todayString();
+  const todayHolidayInfo = holidays.find((h) => {
+    // Normalisasi format tanggal dari DB (bisa berupa string "YYYY-MM-DD" atau Date object)
+    const tgl = typeof h.tanggal === "string"
+      ? h.tanggal.slice(0, 10)
+      : new Date(h.tanggal).toISOString().slice(0, 10);
+    return tgl === todayStr;
+  });
+  const isHolidayToday = !!todayHolidayInfo;
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -802,13 +846,15 @@ const MahasiswaDashboard = () => {
                 </div>
               </div>
 
-              {/* Holiday Info */}
-              {todayHoliday && (
-                <div className="bg-red-50 border border-red-300 rounded-lg p-4 mb-4 flex items-center gap-3">
-                  <Calendar className="w-8 h-8 text-red-500" />
+              {/* Banner Hari Libur */}
+              {isHolidayToday && (
+                <div className="mb-4 flex items-start gap-3 rounded-xl border border-orange-400/40 bg-orange-500/20 px-4 py-3 text-orange-200 backdrop-blur-sm">
+                  <span className="mt-0.5 text-xl">🎉</span>
                   <div>
-                    <p className="font-bold text-red-900">Hari Libur</p>
-                    <p className="text-red-800 text-sm">{todayHoliday.keterangan}</p>
+                    <p className="font-semibold text-orange-100">Hari Ini Libur</p>
+                    <p className="text-sm text-orange-200/90">
+                      {todayHolidayInfo?.keterangan || "Hari Libur"} — Absensi tidak tersedia hari ini.
+                    </p>
                   </div>
                 </div>
               )}
@@ -817,17 +863,17 @@ const MahasiswaDashboard = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <button
                   onClick={() => handleAbsen("pagi")}
-                  disabled={!canAbsenPagi || hadiruTodayPagi || absenLoading || !!todayHoliday}
+                  disabled={isHolidayToday || !canAbsenPagi || hadiruTodayPagi || absenLoading}
                   title={
-                    todayHoliday
-                      ? "Hari ini libur"
+                    isHolidayToday
+                      ? `Hari ini libur: ${todayHolidayInfo?.keterangan || "Hari Libur"}`
                       : !canAbsenPagi
-                      ? "Diluar jam absen pagi"
-                      : hadiruTodayPagi
-                        ? "Sudah absen pagi"
-                        : ""
+                        ? "Diluar jam absen pagi"
+                        : hadiruTodayPagi
+                          ? "Sudah absen pagi"
+                          : ""
                   }
-                  className={`btn-primary flex items-center justify-center py-3 ${hadiruTodayPagi || todayHoliday ? "opacity-50" : ""
+                  className={`btn-primary flex items-center justify-center py-3 ${isHolidayToday || hadiruTodayPagi ? "opacity-50" : ""
                     }`}
                 >
                   {absenLoading ? (
@@ -847,24 +893,24 @@ const MahasiswaDashboard = () => {
                 <button
                   onClick={() => handleAbsen("sore")}
                   disabled={
+                    isHolidayToday ||
                     !canAbsenSore ||
                     !hadiruTodayPagi ||
                     hadirTodaySore ||
-                    absenLoading ||
-                    !!todayHoliday
+                    absenLoading
                   }
                   title={
-                    todayHoliday
-                      ? "Hari ini libur"
+                    isHolidayToday
+                      ? `Hari ini libur: ${todayHolidayInfo?.keterangan || "Hari Libur"}`
                       : !canAbsenSore
-                      ? "Diluar jam absen sore"
-                      : !hadiruTodayPagi
-                        ? "Harus absen pagi dulu"
-                        : hadirTodaySore
-                          ? "Sudah absen sore"
-                          : ""
+                        ? "Diluar jam absen sore"
+                        : !hadiruTodayPagi
+                          ? "Harus absen pagi dulu"
+                          : hadirTodaySore
+                            ? "Sudah absen sore"
+                            : ""
                   }
-                  className={`btn-primary flex items-center justify-center py-3 ${hadirTodaySore ? "opacity-50" : ""
+                  className={`btn-primary flex items-center justify-center py-3 ${isHolidayToday || hadirTodaySore ? "opacity-50" : ""
                     }`}
                 >
                   {absenLoading ? (
@@ -1336,8 +1382,361 @@ const MahasiswaDashboard = () => {
           </div>
         )}
 
+        {/* TAB: TUGAS MINGGUAN */}
+        {activeTab === "tugasMingguan" && (
+          <div className="space-y-6 animate-fade-in">
+            {/* Header & Quick Summary */}
+            <div className="rounded-3xl border border-white/20 bg-white/10 p-6 shadow-2xl backdrop-blur-xl">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div>
+                  <h2 className="text-2xl font-black text-white flex items-center gap-3">
+                    <div className="p-2.5 rounded-2xl bg-gradient-to-tr from-blue-500 to-indigo-500 text-white shadow-lg">
+                      <ListTodo className="w-6 h-6" />
+                    </div>
+                    Tugas Mingguan PKL
+                  </h2>
+                  <p className="text-sm text-blue-100/80 mt-1">
+                    Kerjakan dan kumpulkan tugas mingguan yang diberikan oleh Mentor kelompok Anda tepat waktu.
+                  </p>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <div className="bg-black/30 border border-white/10 px-4 py-2 rounded-2xl">
+                    <span className="text-xs text-white/60 block">Total Tugas</span>
+                    <span className="text-lg font-bold text-white">{tugasMingguanList.length}</span>
+                  </div>
+                  <div className="bg-emerald-500/20 border border-emerald-500/40 px-4 py-2 rounded-2xl">
+                    <span className="text-xs text-emerald-200 block">Disetujui</span>
+                    <span className="text-lg font-bold text-emerald-300">
+                      {tugasMingguanList.filter((t) => t.submission_status === "approved").length}
+                    </span>
+                  </div>
+                  <div className="bg-amber-500/20 border border-amber-500/40 px-4 py-2 rounded-2xl">
+                    <span className="text-xs text-amber-200 block">Perlu Revisi</span>
+                    <span className="text-lg font-bold text-amber-300">
+                      {tugasMingguanList.filter((t) => t.submission_status === "revision").length}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* List of Weekly Tasks */}
+            {tugasMingguanList.length === 0 ? (
+              <div className="rounded-3xl border border-dashed border-white/20 bg-white/5 p-12 text-center backdrop-blur-md">
+                <ListTodo className="w-12 h-12 text-white/30 mx-auto mb-3" />
+                <h3 className="text-lg font-bold text-white mb-1">Belum Ada Tugas Mingguan</h3>
+                <p className="text-sm text-white/60">
+                  Mentor kelompok Anda belum membagikan tugas mingguan saat ini.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-5">
+                {tugasMingguanList.map((tm) => {
+                  const isDeadlinePassed = new Date(tm.deadline) < new Date();
+                  const isSubmitted = !!tm.submission_id;
+
+                  return (
+                    <div
+                      key={tm.id}
+                      className={`rounded-3xl border transition-all duration-300 backdrop-blur-xl overflow-hidden ${
+                        tm.submission_status === "approved"
+                          ? "border-emerald-500/30 bg-emerald-950/20 shadow-[0_0_20px_rgba(16,185,129,0.1)]"
+                          : tm.submission_status === "revision"
+                          ? "border-amber-500/40 bg-amber-950/20 shadow-[0_0_20px_rgba(245,158,11,0.15)]"
+                          : isSubmitted
+                          ? "border-blue-500/30 bg-white/10 shadow-lg"
+                          : isDeadlinePassed
+                          ? "border-red-500/30 bg-red-950/15 shadow-lg"
+                          : "border-white/20 bg-white/10 shadow-lg hover:border-white/30"
+                      }`}
+                    >
+                      <div className="p-6">
+                        {/* Header card */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                          <div className="flex items-center gap-3">
+                            <span className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-blue-500/30 to-indigo-500/30 border border-blue-400/40 text-blue-200 text-xs font-bold uppercase tracking-wider">
+                              Minggu ke-{tm.minggu_ke}
+                            </span>
+                            <h3 className="text-lg font-bold text-white">{tm.judul}</h3>
+                          </div>
+
+                          {/* Status Badge */}
+                          <div className="flex items-center gap-2">
+                            {tm.submission_status === "approved" ? (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                                <CheckCircle2 className="w-3.5 h-3.5" /> Disetujui
+                              </span>
+                            ) : tm.submission_status === "revision" ? (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                                <AlertTriangle className="w-3.5 h-3.5" /> Perlu Revisi
+                              </span>
+                            ) : tm.submission_status === "rejected" ? (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-500/20 text-red-300 border border-red-500/40">
+                                <X className="w-3.5 h-3.5" /> Ditolak
+                              </span>
+                            ) : isSubmitted ? (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                                <Clock className="w-3.5 h-3.5" /> Menunggu Review
+                              </span>
+                            ) : isDeadlinePassed ? (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-red-500/20 text-red-300 border border-red-500/40">
+                                <AlertCircle className="w-3.5 h-3.5" /> Terlewat Deadline
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-white/10 text-white/80 border border-white/20">
+                                Belum Dikumpulkan
+                              </span>
+                            )}
+
+                            {tm.nilai !== null && tm.nilai !== undefined && (
+                              <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-gradient-to-r from-purple-500 to-indigo-500 text-white shadow-md">
+                                Nilai: {tm.nilai} / 100
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Description */}
+                        <div className="bg-black/30 rounded-2xl p-4 border border-white/10 text-sm text-white/90 whitespace-pre-line leading-relaxed mb-4">
+                          {tm.deskripsi}
+                        </div>
+
+                        {/* Attachment & Info Row */}
+                        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-white/70 border-t border-white/10 pt-4">
+                          <div className="flex flex-wrap items-center gap-4">
+                            <div className="flex items-center gap-1.5">
+                              <Calendar className="w-4 h-4 text-blue-400" />
+                              <span>
+                                Deadline:{" "}
+                                <strong className="text-white">
+                                  {new Date(tm.deadline).toLocaleDateString("id-ID", {
+                                    weekday: "short",
+                                    year: "numeric",
+                                    month: "short",
+                                    day: "numeric",
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })}
+                                </strong>
+                              </span>
+                            </div>
+
+                            {tm.file_attachment && (
+                              <a
+                                href={`/uploads/${tm.file_attachment.replace(/^uploads\//, "")}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/30 transition-colors font-medium"
+                              >
+                                <Paperclip className="w-3.5 h-3.5" /> Lampiran Mentor
+                              </a>
+                            )}
+                          </div>
+
+                          {/* Action Button */}
+                          <div>
+                            {selectedTM === tm.id ? (
+                              <button
+                                onClick={() => {
+                                  setSelectedTM(null);
+                                  setTmSubmitForm({ catatan_mahasiswa: "", link_url: "", file: null });
+                                }}
+                                className="px-4 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-colors"
+                              >
+                                Tutup Form
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => {
+                                  setSelectedTM(tm.id);
+                                  setTmSubmitForm({
+                                    catatan_mahasiswa: tm.catatan_mahasiswa || "",
+                                    link_url: tm.submission_link || "",
+                                    file: null,
+                                  });
+                                }}
+                                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-2 ${
+                                  isSubmitted
+                                    ? "bg-white/15 hover:bg-white/25 text-white border border-white/20"
+                                    : "bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-blue-500/25"
+                                }`}
+                              >
+                                <Upload className="w-3.5 h-3.5" />
+                                {isSubmitted ? "Kirim Ulang / Edit Pengumpulan" : "Kumpulkan Tugas"}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Submission details if already submitted */}
+                        {isSubmitted && selectedTM !== tm.id && (
+                          <div className="mt-4 pt-4 border-t border-white/10">
+                            <div className="bg-white/5 rounded-2xl p-4 border border-white/10 space-y-2 text-xs">
+                              <div className="flex items-center justify-between text-white/60">
+                                <span>
+                                  Dikumpulkan pada:{" "}
+                                  <strong className="text-white/80">
+                                    {new Date(tm.submitted_at).toLocaleString("id-ID")}
+                                  </strong>
+                                </span>
+                                {tm.reviewed_at && (
+                                  <span>
+                                    Diperiksa pada:{" "}
+                                    <strong className="text-white/80">
+                                      {new Date(tm.reviewed_at).toLocaleString("id-ID")}
+                                    </strong>
+                                  </span>
+                                )}
+                              </div>
+
+                              {tm.catatan_mahasiswa && (
+                                <p className="text-white/80">
+                                  <span className="font-semibold text-white">Catatan Anda:</span>{" "}
+                                  {tm.catatan_mahasiswa}
+                                </p>
+                              )}
+
+                              <div className="flex flex-wrap gap-3 pt-1">
+                                {tm.submission_file && (
+                                  <a
+                                    href={`/uploads/${tm.submission_file.replace(/^uploads\//, "")}`}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1.5 text-blue-300 hover:text-blue-200 underline font-medium"
+                                  >
+                                    <Download className="w-3.5 h-3.5" /> File Tugas Anda
+                                  </a>
+                                )}
+                                {tm.submission_link && (
+                                  <a
+                                    href={
+                                      tm.submission_link.startsWith("http")
+                                        ? tm.submission_link
+                                        : `https://${tm.submission_link}`
+                                    }
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1.5 text-indigo-300 hover:text-indigo-200 underline font-medium"
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5" /> Buka Link Pengerjaan
+                                  </a>
+                                )}
+                              </div>
+
+                              {tm.catatan_mentor && (
+                                <div className="mt-3 p-3 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-200">
+                                  <span className="font-bold flex items-center gap-1 mb-1">
+                                    💬 Catatan & Masukan Mentor ({tm.mentor_nama}):
+                                  </span>
+                                  <p className="text-xs text-purple-100 whitespace-pre-line">
+                                    {tm.catatan_mentor}
+                                  </p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Submission Form Modal/Panel */}
+                        {selectedTM === tm.id && (
+                          <form
+                            onSubmit={(e) => handleSubmitTugasMingguan(e, tm.id)}
+                            className="mt-5 pt-5 border-t border-white/15 space-y-4 animate-fade-in bg-black/40 p-5 rounded-2xl border border-white/10"
+                          >
+                            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                              <Upload className="w-4 h-4 text-blue-400" />
+                              Form Pengumpulan Tugas (Minggu ke-{tm.minggu_ke})
+                            </h4>
+
+                            <div>
+                              <label className="block text-xs font-medium text-white/80 mb-1">
+                                File Tugas / Dokumen / Source Code (PDF, DOCX, ZIP, gambar, dll)
+                              </label>
+                              <input
+                                type="file"
+                                onChange={(e) =>
+                                  setTmSubmitForm({ ...tmSubmitForm, file: e.target.files[0] })
+                                }
+                                className="w-full text-xs text-white/70 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-500 transition cursor-pointer"
+                              />
+                              {tm.submission_file && !tmSubmitForm.file && (
+                                <p className="text-[11px] text-white/50 mt-1">
+                                  File yang sudah ada tersimpan. Pilih file baru jika ingin mengganti.
+                                </p>
+                              )}
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-white/80 mb-1">
+                                Link Pengerjaan (GitHub / Google Drive / Figma / Website demo)
+                              </label>
+                              <input
+                                type="text"
+                                value={tmSubmitForm.link_url}
+                                onChange={(e) =>
+                                  setTmSubmitForm({ ...tmSubmitForm, link_url: e.target.value })
+                                }
+                                placeholder="https://github.com/username/project atau https://drive.google.com/..."
+                                className="w-full bg-black/30 border border-white/15 rounded-xl px-4 py-2.5 text-xs text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-400"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-medium text-white/80 mb-1">
+                                Catatan / Ringkasan Pengerjaan
+                              </label>
+                              <textarea
+                                rows="3"
+                                value={tmSubmitForm.catatan_mahasiswa}
+                                onChange={(e) =>
+                                  setTmSubmitForm({
+                                    ...tmSubmitForm,
+                                    catatan_mahasiswa: e.target.value,
+                                  })
+                                }
+                                placeholder="Jelaskan apa yang sudah dikerjakan, kendala, atau petunjuk untuk mentor..."
+                                className="w-full bg-black/30 border border-white/15 rounded-xl p-3 text-xs text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-400 resize-none"
+                              />
+                            </div>
+
+                            <div className="flex justify-end gap-2 pt-2">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedTM(null)}
+                                className="px-4 py-2 rounded-xl text-xs font-medium bg-white/10 hover:bg-white/20 text-white transition-colors"
+                              >
+                                Batal
+                              </button>
+                              <button
+                                type="submit"
+                                disabled={tmLoading}
+                                className="px-6 py-2 rounded-xl text-xs font-bold bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-blue-500/30 transition-all"
+                              >
+                                {tmLoading ? (
+                                  <>
+                                    <Loader2 className="w-4 h-4 animate-spin" /> Mengirim...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Send className="w-4 h-4" /> Kumpulkan Sekarang
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </form>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* TAB: TUGAS AKHIR */}
         {activeTab === "tugasAkhir" && (
+
           <div className="space-y-6">
             <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
               <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
@@ -1352,7 +1751,7 @@ const MahasiswaDashboard = () => {
                     required
                     value={taForm.judul}
                     onChange={(e) => setTaForm({ ...taForm, judul: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    className="w-full bg-black/20 border border-white/20 rounded-lg px-4 py-2 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400"
                     placeholder="Masukkan judul tugas akhir"
                   />
                 </div>
@@ -1362,16 +1761,16 @@ const MahasiswaDashboard = () => {
                     rows="3"
                     value={taForm.deskripsi}
                     onChange={(e) => setTaForm({ ...taForm, deskripsi: e.target.value })}
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    className="w-full bg-black/20 border border-white/20 rounded-lg px-4 py-2 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400 resize-none"
                     placeholder="Deskripsi singkat mengenai tugas akhir..."
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-white/90 mb-1">File Proposal (ZIP) *</label>
+                  <label className="block text-sm font-medium text-white/90 mb-1">File Proposal (PDF) *</label>
                   <input
                     type="file"
                     required
-                    accept=".zip,application/zip,application/x-zip-compressed"
+                    accept="application/pdf,.pdf"
                     onChange={(e) => setTaForm({ ...taForm, file: e.target.files[0] })}
                     className="w-full text-sm text-white/60 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
                   />
@@ -1435,21 +1834,10 @@ const MahasiswaDashboard = () => {
         {/* TAB: PENILAIAN */}
         {activeTab === "grades" && (
           <div className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-sm backdrop-blur-md">
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-4 gap-3">
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <Award className="w-6 h-6 text-indigo-500" />
-                Penilaian dari Mentor
-              </h2>
-              {grades.length > 0 && (
-                <button 
-                  onClick={exportGradesPDF} 
-                  className="bg-indigo-600/80 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-2 self-start sm:self-auto"
-                >
-                  <Download className="w-4 h-4" />
-                  Download PDF
-                </button>
-              )}
-            </div>
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+              <Award className="w-6 h-6 text-indigo-500" />
+              Penilaian dari Mentor
+            </h2>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-white/5">
@@ -1489,12 +1877,12 @@ const MahasiswaDashboard = () => {
                   )}
                 </tbody>
                 {grades.length > 0 && (
-                  <tfoot className="bg-white/5 font-bold">
+                  <tfoot className="bg-white/10 font-bold">
                     <tr>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-white" colSpan="2">
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm text-white/80 font-semibold" colSpan="2">
                         Total Nilai (Tertimbang):
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-white">
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-indigo-300">
                         {(() => {
                           let total = 0;
                           let totalBobot = 0;
@@ -1589,28 +1977,28 @@ const MahasiswaDashboard = () => {
 
       {/* Modal Izin */}
       {showIzinModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-          <div className="bg-slate-800 border border-white/10 rounded-xl shadow-2xl max-w-md w-full">
-            <div className="flex justify-between items-center p-6 border-b border-white/10">
-              <h3 className="text-xl font-bold text-white">Ajukan Izin</h3>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+            <div className="flex justify-between items-center p-6 border-b">
+              <h3 className="text-xl font-bold text-gray-900">Ajukan Izin</h3>
               <button
                 onClick={() => setShowIzinModal(false)}
-                className="text-white/50 hover:text-white/80 transition-colors"
+                className="text-gray-400 hover:text-gray-600"
               >
                 <X className="w-6 h-6" />
               </button>
             </div>
 
             <form onSubmit={handleSubmitIzin} className="p-6">
-              <div className="bg-blue-900/30 border border-blue-500/30 rounded-lg p-3 mb-4">
-                <p className="text-sm text-blue-200">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                <p className="text-sm text-blue-800">
                   📅 Izin untuk hari ini:{" "}
-                  <strong className="text-blue-100">{new Date().toLocaleDateString("id-ID")}</strong>
+                  <strong>{new Date().toLocaleDateString("id-ID")}</strong>
                 </p>
               </div>
 
-              <div className="mb-5">
-                <label className="block text-sm font-medium text-white/90 mb-2">
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
                   Keterangan Izin
                 </label>
                 <textarea
@@ -1618,7 +2006,7 @@ const MahasiswaDashboard = () => {
                   onChange={(e) =>
                     setIzinData({ ...izinData, keterangan: e.target.value })
                   }
-                  className="input-field w-full bg-white/5 border border-white/10 text-white placeholder-white/40 focus:border-blue-500 focus:ring-blue-500 rounded-lg p-3"
+                  className="w-full rounded-lg border border-gray-300 bg-gray-50 px-4 py-2 text-gray-900 placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                   rows="4"
                   placeholder="Alasan izin (sakit, keperluan keluarga, dll.)"
                   required
@@ -1629,14 +2017,14 @@ const MahasiswaDashboard = () => {
                 <button
                   type="button"
                   onClick={() => setShowIzinModal(false)}
-                  className="btn-secondary flex-1 py-2"
+                  className="btn-secondary flex-1"
                   disabled={izinLoading}
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="btn-primary flex-1 flex items-center justify-center py-2"
+                  className="btn-primary flex-1 flex items-center justify-center"
                   disabled={izinLoading}
                 >
                   {izinLoading ? (

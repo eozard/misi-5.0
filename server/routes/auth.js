@@ -267,6 +267,28 @@ export const absen = async (req, res) => {
         .json({ success: false, message: "Device tidak terdaftar" });
     }
 
+    // STEP 1.5: Cek apakah hari ini adalah hari libur
+    // Hitung tanggal hari ini dalam WIB (UTC+7) dari login_time yang dikirim client
+    const loginDateRaw = new Date(
+      /Z$|[+-]\d{2}:\d{2}$/.test(login_time) ? login_time : `${login_time}Z`
+    );
+    const todayWib = new Date(loginDateRaw.getTime() + 7 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10); // format: "YYYY-MM-DD"
+
+    const [holidayRows] = await conn.query(
+      "SELECT id, keterangan FROM holidays WHERE tanggal = ? LIMIT 1",
+      [todayWib],
+    );
+    if (holidayRows.length > 0) {
+      const keterangan = holidayRows[0].keterangan || "Hari Libur";
+      console.log(`🚫 Absensi ditolak: hari libur (${todayWib}) - ${keterangan}`);
+      return res.status(403).json({
+        success: false,
+        message: `Hari ini adalah hari libur: ${keterangan}. Absensi tidak tersedia.`,
+      });
+    }
+
     // STEP 2: Parse waktu (ISO) → WIB (UTC+7)
     const normalizeIso = (value) => {
       if (!value) return value;
@@ -284,39 +306,12 @@ export const absen = async (req, res) => {
     const { hour, minute, date: today } = getJakartaDateTimeParts(loginDateTime);
     const timeInMinutes = hour * 60 + minute;
 
-    // STEP 2.5: Cek apakah hari ini libur
-    const [holidayRows] = await conn.query(
-      "SELECT keterangan FROM holidays WHERE tanggal = ? LIMIT 1",
-      [today]
-    );
-    if (holidayRows.length > 0) {
-      console.log(`❌ Absen ditolak: Hari Libur (${holidayRows[0].keterangan})`);
-      return res.status(403).json({
-        success: false,
-        message: `Hari ini libur: ${holidayRows[0].keterangan}`,
-      });
-    }
-
-    // STEP 3: Tentukan sesi dan validasi waktu dari settings
+    // STEP 3: Tentukan sesi
     let sesi;
-    
-    // Ambil settings dari database
-    const [settingRows] = await conn.query("SELECT setting_key, setting_value FROM settings");
-    const settings = {};
-    settingRows.forEach(row => {
-      settings[row.setting_key] = row.setting_value;
-    });
-
-    const parseTime = (timeStr) => {
-      if (!timeStr) return 0;
-      const [h, m] = timeStr.split(':').map(Number);
-      return h * 60 + m;
-    };
-
-    const pagiStart = parseTime(settings.pagi_start || "08:00");
-    const pagiEnd = parseTime(settings.pagi_end || "10:00");
-    const soreStart = parseTime(settings.sore_start || "15:00");
-    const soreEnd = parseTime(settings.sore_end || "17:00");
+    const pagiStart = 8 * 60;
+    const pagiEnd = 10 * 60;
+    const soreStart = 15 * 60;
+    const soreEnd = 17 * 60;
 
     if (process.env.BYPASS_PAGI_ONLY === "true") {
       console.log("⏰ Time check bypassed (pagi only)");
@@ -340,7 +335,7 @@ export const absen = async (req, res) => {
         return res.status(403).json({
           success: false,
           message:
-            `Waktu absensi tidak valid. Pagi: ${settings.pagi_start || "08:00"}-${settings.pagi_end || "10:00"}, Sore: ${settings.sore_start || "15:00"}-${settings.sore_end || "17:00"}`,
+            "Waktu absensi tidak valid. Pagi: 08:00-10:00, Sore: 15:00-17:00",
         });
       }
     }
@@ -746,4 +741,137 @@ export const submitTugasAkhir = async (req, res) => {
   }
 };
 
+/*
+ * ============================================================================
+ * TUGAS MINGGUAN (MAHASISWA)
+ * ============================================================================
+ */
+
+export const getTugasMingguan = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { nama, kelompok } = req.user;
+
+    const [rows] = await conn.query(
+      `SELECT 
+        tm.id,
+        tm.mentor_nama,
+        tm.kelompok,
+        tm.minggu_ke,
+        tm.judul,
+        tm.deskripsi,
+        tm.file_attachment,
+        tm.deadline,
+        tm.created_at,
+        tms.id AS submission_id,
+        tms.catatan_mahasiswa,
+        tms.file_url AS submission_file,
+        tms.link_url AS submission_link,
+        tms.nilai,
+        tms.status AS submission_status,
+        tms.catatan_mentor,
+        tms.submitted_at,
+        tms.reviewed_at
+       FROM tugas_mingguan tm
+       LEFT JOIN tugas_mingguan_submissions tms 
+         ON tm.id = tms.tugas_id AND tms.student_nama = ?
+       WHERE tm.kelompok = ?
+       ORDER BY tm.minggu_ke ASC, tm.deadline ASC`,
+      [nama, kelompok || "-"]
+    );
+
+    return res.json({ success: true, data: rows });
+  } catch (error) {
+    console.error("Get tugas mingguan mahasiswa error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+};
+
+export const submitTugasMingguan = async (req, res) => {
+  const conn = await pool.getConnection();
+  try {
+    const { id } = req.params; // tugas_id
+    const { nama, kelompok } = req.user;
+    const { catatan_mahasiswa, link_url } = req.body;
+    const file = req.file;
+
+    // Pastikan tugas mingguan exists
+    const [tugasRows] = await conn.query(
+      "SELECT id, deadline FROM tugas_mingguan WHERE id = ? LIMIT 1",
+      [id]
+    );
+
+    if (tugasRows.length === 0) {
+      return res.status(404).json({ success: false, message: "Tugas mingguan tidak ditemukan" });
+    }
+
+    // Periksa apakah sudah ada submission sebelumnya
+    const [existingSubmissions] = await conn.query(
+      "SELECT * FROM tugas_mingguan_submissions WHERE tugas_id = ? AND student_nama = ? LIMIT 1",
+      [id, nama]
+    );
+
+    let storagePath = existingSubmissions.length > 0 ? existingSubmissions[0].file_url : null;
+    if (file) {
+      const safeName = (s) => s.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const timestamp = Date.now();
+      const random = Math.random().toString(36).substring(2, 8);
+      storagePath = `tugas_mingguan/submissions/${timestamp}_${random}_${safeName(file.originalname)}`;
+
+      const uploadResult = await uploadFile(storagePath, file.buffer, file.mimetype);
+      if (!uploadResult.ok) {
+        console.error("Upload file submission gagal:", uploadResult.error);
+        return res.status(500).json({ success: false, message: "Gagal menyimpan file tugas" });
+      }
+    }
+
+    if (!file && !storagePath && (!link_url || !link_url.trim()) && (!catatan_mahasiswa || !catatan_mahasiswa.trim())) {
+      return res.status(400).json({
+        success: false,
+        message: "Harap lampirkan file tugas, link pengerjaan, atau catatan pengerjaan",
+      });
+    }
+
+    if (existingSubmissions.length > 0) {
+      // Update submission (Re-submit / Revisi)
+      await conn.query(
+        `UPDATE tugas_mingguan_submissions 
+         SET catatan_mahasiswa = ?, file_url = ?, link_url = ?, status = 'submitted', submitted_at = NOW() 
+         WHERE id = ?`,
+        [
+          catatan_mahasiswa || existingSubmissions[0].catatan_mahasiswa,
+          storagePath,
+          link_url || existingSubmissions[0].link_url,
+          existingSubmissions[0].id,
+        ]
+      );
+    } else {
+      // Insert new submission
+      await conn.query(
+        `INSERT INTO tugas_mingguan_submissions 
+         (tugas_id, student_nama, kelompok, catatan_mahasiswa, file_url, link_url, status, submitted_at) 
+         VALUES (?, ?, ?, ?, ?, ?, 'submitted', NOW())`,
+        [
+          id,
+          nama,
+          kelompok || "-",
+          catatan_mahasiswa || null,
+          storagePath,
+          link_url || null,
+        ]
+      );
+    }
+
+    return res.json({ success: true, message: "Tugas mingguan berhasil dikumpulkan" });
+  } catch (error) {
+    console.error("Submit tugas mingguan error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  } finally {
+    conn.release();
+  }
+};
+
 export default router;
+

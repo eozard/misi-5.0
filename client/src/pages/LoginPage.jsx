@@ -60,6 +60,12 @@ const LoginPage = () => {
       });
 
       if (response.data.success) {
+        if (response.data.user.role === "mentor") {
+          setError("Akun Mentor hanya dapat login melalui halaman Login Mentor (/mentor-login).");
+          setLoading(false);
+          return;
+        }
+
         setSuccess("Login berhasil! Mengalihkan...");
 
         // Save token and user
@@ -75,8 +81,6 @@ const LoginPage = () => {
         setTimeout(() => {
           if (response.data.user.role === "admin") {
             navigate("/admin");
-          } else if (response.data.user.role === "mentor") {
-            navigate("/mentor");
           } else {
             navigate("/dashboard");
           }
@@ -299,10 +303,19 @@ const LoginPage = () => {
                 </form>
 
                 {/* Footer */}
-                <div className="mt-6 text-center">
+                <div className="mt-6 text-center space-y-2">
                   <p className="text-xs text-gray-500">
-                    &copy; {new Date().getFullYear()} Sistem Absensi PKL. All rights
-                    reserved.
+                    Anda seorang Mentor?{" "}
+                    <button
+                      type="button"
+                      onClick={() => navigate("/mentor-login")}
+                      className="text-indigo-600 hover:text-indigo-700 font-semibold hover:underline"
+                    >
+                      Login Mentor di sini
+                    </button>
+                  </p>
+                  <p className="text-xs text-gray-400">
+                    &copy; {new Date().getFullYear()} Sistem Absensi PKL. All rights reserved.
                   </p>
                 </div>
               </div>
