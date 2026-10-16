@@ -199,7 +199,7 @@ router.post('/grades', async (req, res) => {
       await conn.query(
         `INSERT INTO student_grades (indicator_id, student_nama, nilai) 
          VALUES (?, ?, ?) 
-         ON DUPLICATE KEY UPDATE nilai = VALUES(nilai)`,
+         ON CONFLICT (indicator_id, student_nama) DO UPDATE SET nilai = EXCLUDED.nilai`,
         [grade.indicator_id, grade.student_nama, grade.nilai]
       );
     }

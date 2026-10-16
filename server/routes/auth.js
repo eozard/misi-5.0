@@ -172,11 +172,11 @@ export const login = async (req, res) => {
           `INSERT INTO device_bindings
             (device_id, user_name, kelompok, bound_at, last_used, usage_count)
            VALUES (?, ?, ?, NOW(), NOW(), ?)
-           ON DUPLICATE KEY UPDATE
-             user_name = VALUES(user_name),
-             kelompok = VALUES(kelompok),
+           ON CONFLICT (device_id) DO UPDATE SET
+             user_name = EXCLUDED.user_name,
+             kelompok = EXCLUDED.kelompok,
              last_used = NOW(),
-             usage_count = VALUES(usage_count)`,
+             usage_count = EXCLUDED.usage_count`,
           [
             deviceId,
             nama,

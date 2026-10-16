@@ -33,7 +33,7 @@
     "dotenv": "^16.3.1",
     "cors": "^2.8.5",
     "ip-range-check": "^0.2.0",
-    "mysql2": "^3.11.0",
+    "pg": "^8.16.3",
     "multer": "^2.1.1"
   },
   "devDependencies": {

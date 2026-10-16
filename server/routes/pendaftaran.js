@@ -120,6 +120,7 @@ router.post(
   ]),
   async (req, res) => {
     const conn = await pool.getConnection();
+    let transactionStarted = false;
     try {
       const { nama, nim, divisi, email } = req.body;
       const files = req.files || {};
@@ -161,11 +162,14 @@ router.post(
         });
       }
 
+      await conn.beginTransaction();
+      transactionStarted = true;
+
       // Hitung urutan (auto increment sederhana: COUNT + 1)
       const [countRows] = await conn.query(
         "SELECT COUNT(*) AS total FROM pendaftar",
       );
-      const urutan = (countRows[0]?.total || 0) + 1;
+      const urutan = Number(countRows[0]?.total || 0) + 1;
       const status = urutan <= 30 ? "priority" : "pending";
 
       const [insertRes] = await conn.query(
@@ -206,21 +210,26 @@ router.post(
         });
       }
 
+      // PostgreSQL tidak mendukung sintaks MySQL `VALUES ?` untuk bulk insert.
+      const fileValues = fileRows.flatMap((r) => [
+        r.pendaftar_id,
+        r.tipe,
+        r.filename,
+        r.original_name,
+        r.file_size,
+        r.mime_type,
+        r.storage_path,
+      ]);
+      const filePlaceholders = fileRows
+        .map((_, rowIndex) =>
+          `(${Array.from({ length: 7 }, (_, columnIndex) => `$${rowIndex * 7 + columnIndex + 1}`).join(", ")})`,
+        )
+        .join(", ");
       await conn.query(
         `INSERT INTO pendaftar_files
           (pendaftar_id, tipe, filename, original_name, file_size, mime_type, storage_path)
-         VALUES ?`,
-        [
-          fileRows.map((r) => [
-            r.pendaftar_id,
-            r.tipe,
-            r.filename,
-            r.original_name,
-            r.file_size,
-            r.mime_type,
-            r.storage_path,
-          ]),
-        ],
+         VALUES ${filePlaceholders}`,
+        fileValues,
       );
 
       // Ambil data pendaftar final
@@ -229,12 +238,22 @@ router.post(
         [pendaftarId],
       );
 
+      await conn.commit();
+      transactionStarted = false;
+
       return res.status(201).json({
         success: true,
         message: "Pendaftaran berhasil dikirim",
         data: buildPendaftarResponse(finalRows[0], fileRows),
       });
     } catch (err) {
+      if (transactionStarted) {
+        try {
+          await conn.rollback();
+        } catch (rollbackError) {
+          console.error("Rollback pendaftaran gagal:", rollbackError);
+        }
+      }
       console.error("Pendaftaran error:", err);
       return res
         .status(500)

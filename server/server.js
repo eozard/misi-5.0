@@ -1,14 +1,13 @@
 /*
  * ============================================================================
- * MAIN SERVER FILE - ENTRY POINT BACKEND (MySQL Version)
+ * MAIN SERVER FILE - ENTRY POINT BACKEND (Supabase PostgreSQL)
  * ============================================================================
  * File ini adalah entry point dari aplikasi backend.
  * Berisi konfigurasi Express server, middleware, routing, dan static file serving.
  *
- * PENGGANTI SUPABASE → MySQL:
- * - Semua query sekarang lewat server/config/db.js (mysql2/promise pool)
+ * Database menggunakan PostgreSQL milik Supabase melalui server/config/db.js.
  * - File upload disimpan di folder server/uploads/ dan di-serve via /uploads
- * - Tidak butuh SUPABASE_URL/KEY lagi
+ * - SUPABASE_DB_URL hanya disimpan sebagai environment variable backend
  *
  * CARA SETUP LOKAL (XAMPP):
  * 1. Nyalakan MySQL di XAMPP
