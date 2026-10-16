@@ -863,17 +863,15 @@ const MahasiswaDashboard = () => {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <button
                   onClick={() => handleAbsen("pagi")}
-                  disabled={isHolidayToday || !canAbsenPagi || hadiruTodayPagi || absenLoading}
+                  disabled={!canAbsenPagi || hadiruTodayPagi || absenLoading}
                   title={
-                    isHolidayToday
-                      ? `Hari ini libur: ${todayHolidayInfo?.keterangan || "Hari Libur"}`
-                      : !canAbsenPagi
+                    !canAbsenPagi
                         ? "Diluar jam absen pagi"
                         : hadiruTodayPagi
                           ? "Sudah absen pagi"
                           : ""
                   }
-                  className={`btn-primary flex items-center justify-center py-3 ${isHolidayToday || hadiruTodayPagi ? "opacity-50" : ""
+                  className={`btn-primary flex items-center justify-center py-3 ${hadiruTodayPagi ? "opacity-50" : ""
                     }`}
                 >
                   {absenLoading ? (
@@ -893,16 +891,13 @@ const MahasiswaDashboard = () => {
                 <button
                   onClick={() => handleAbsen("sore")}
                   disabled={
-                    isHolidayToday ||
                     !canAbsenSore ||
                     !hadiruTodayPagi ||
                     hadirTodaySore ||
                     absenLoading
                   }
                   title={
-                    isHolidayToday
-                      ? `Hari ini libur: ${todayHolidayInfo?.keterangan || "Hari Libur"}`
-                      : !canAbsenSore
+                    !canAbsenSore
                         ? "Diluar jam absen sore"
                         : !hadiruTodayPagi
                           ? "Harus absen pagi dulu"
@@ -910,7 +905,7 @@ const MahasiswaDashboard = () => {
                             ? "Sudah absen sore"
                             : ""
                   }
-                  className={`btn-primary flex items-center justify-center py-3 ${isHolidayToday || hadirTodaySore ? "opacity-50" : ""
+                  className={`btn-primary flex items-center justify-center py-3 ${hadirTodaySore ? "opacity-50" : ""
                     }`}
                 >
                   {absenLoading ? (

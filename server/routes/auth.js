@@ -267,28 +267,6 @@ export const absen = async (req, res) => {
         .json({ success: false, message: "Device tidak terdaftar" });
     }
 
-    // STEP 1.5: Cek apakah hari ini adalah hari libur
-    // Hitung tanggal hari ini dalam WIB (UTC+7) dari login_time yang dikirim client
-    const loginDateRaw = new Date(
-      /Z$|[+-]\d{2}:\d{2}$/.test(login_time) ? login_time : `${login_time}Z`
-    );
-    const todayWib = new Date(loginDateRaw.getTime() + 7 * 60 * 60 * 1000)
-      .toISOString()
-      .slice(0, 10); // format: "YYYY-MM-DD"
-
-    const [holidayRows] = await conn.query(
-      "SELECT id, keterangan FROM holidays WHERE tanggal = ? LIMIT 1",
-      [todayWib],
-    );
-    if (holidayRows.length > 0) {
-      const keterangan = holidayRows[0].keterangan || "Hari Libur";
-      console.log(`🚫 Absensi ditolak: hari libur (${todayWib}) - ${keterangan}`);
-      return res.status(403).json({
-        success: false,
-        message: `Hari ini adalah hari libur: ${keterangan}. Absensi tidak tersedia.`,
-      });
-    }
-
     // STEP 2: Parse waktu (ISO) → WIB (UTC+7)
     const normalizeIso = (value) => {
       if (!value) return value;
